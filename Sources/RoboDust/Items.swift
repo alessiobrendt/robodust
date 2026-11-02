@@ -195,6 +195,8 @@ enum SpriteFactory {
     static let iconPts: CGFloat = 64
     static let labelSize = CGSize(width: 124, height: 34)
     static let scale: CGFloat = 2
+    /// White with a shadow suits a wallpaper. The wooden floor in the promo video needs dark text.
+    static var darkLabels = false
 
     static func context(w: Int, h: Int, space: CGColorSpace) -> CGContext {
         CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
@@ -263,7 +265,9 @@ enum SpriteFactory {
         let shadow = NSShadow()
         shadow.shadowOffset = NSSize(width: 0, height: -1); shadow.shadowBlurRadius = 2
         shadow.shadowColor = NSColor(white: 0, alpha: 0.75)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white, .shadow: shadow]
+        let attrs: [NSAttributedString.Key: Any] = darkLabels
+            ? [.font: font, .foregroundColor: NSColor(srgbRed: 0.17, green: 0.11, blue: 0.05, alpha: 1)]
+            : [.font: font, .foregroundColor: NSColor.white, .shadow: shadow]
         let maxW = labelSize.width - 6
         let lines = wrap(name, width: maxW, attrs: attrs)
         NSGraphicsContext.saveGraphicsState()

@@ -29,6 +29,12 @@ if args.contains("--dump") || args.contains("--video") {
     exit(0)
 }
 
+if let path = value("--thanks-video") {
+    _ = NSApplication.shared
+    try ThanksVideo.render(to: path, frames: value("--frames"))
+    exit(0)
+}
+
 if let dir = value("--export-art") {
     _ = NSApplication.shared
     try Offline.exportArt(to: dir)

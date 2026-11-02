@@ -162,7 +162,7 @@ final class Sim {
         items = entries.enumerated().map { Item(index: $0.offset, entry: $0.element) }
         totalBytes = entries.reduce(0) { $0 + $1.bytes }
         // Docked centre: tower's back rests against the bottom wall.
-        let dx = Sim.bestDockX(items: items, width: size.x)
+        let dx = Sim.dockXOverride ?? Sim.bestDockX(items: items, width: size.x)
         dockPos = V2(dx, visibleMax.y - R * 2.08 - 6)
         pos = dockPos
         heading = -.pi / 2
@@ -439,7 +439,7 @@ final class Sim {
         let live = items.filter { $0.onFloor }.map { $0.icon.pos }
         path = []; pathI = 0
         guard !live.isEmpty else { return }
-        let step = R * 1.6
+        let step = R * laneSpacing
         let minY = max(live.map(\.y).min()!, wall.min.y + R + 2)
         let maxY = min(live.map(\.y).max()!, wall.max.y - R - 2)
         var lanes: [(y: Float, a: Float, b: Float)] = []
@@ -455,7 +455,16 @@ final class Sim {
         for l in lanes {
             let near = abs(l.a - x) < abs(l.b - x) ? l.a : l.b
             let far = near == l.a ? l.b : l.a
-            for p in [V2(near, l.y), V2(far, l.y)] {
+            // A row that crosses the dock goes around it, rather than pressing against it until it times out.
+            let sideL = dockPos.x - R * 2.35, sideR = dockPos.x + R * 2.35
+            let crossesDock = insideKeepOut(V2(dockPos.x, l.y)) && min(near, far) < sideL && max(near, far) > sideR
+            var stops = [V2(near, l.y), V2(far, l.y)]
+            if crossesDock {
+                let (first, second) = near < far ? (sideL, sideR) : (sideR, sideL)
+                let over = dockPos.y + dockOut.y * R * 2.2
+                stops = [V2(near, l.y), V2(first, l.y), V2(first, over), V2(second, over), V2(second, l.y), V2(far, l.y)]
+            }
+            for p in stops {
                 let q = clampToWalk(p)
                 if !insideKeepOut(q) { path.append(q) }
             }
@@ -503,7 +512,7 @@ final class Sim {
         }
         var target = path[pathI]
         waypointT += dt
-        let reach = pathI == path.count - 1 ? R * 0.28 : R * 0.45
+        let reach = (pathI == path.count - 1 ? R * 0.28 : R * 0.45) * max(1, speedScale)
         if (target - pos).len < reach || waypointT > 14 {
             pathI += 1; waypointT = 0
             if pathI >= path.count { return }
@@ -517,11 +526,13 @@ final class Sim {
             aim = target + (path[pathI + 1] - target).unit * (R * 0.9 * k)
         }
         let err = wrapAngle(atan2(aim.y - pos.y, aim.x - pos.x) - heading)
-        let wCmd = clampf(err * 4.2, -3.1, 3.1)
+        let wCmd = clampf(err * 4.2 * speedScale, -3.1 * speedScale, 3.1 * speedScale)
         let align = clampf(1 - abs(err) / 1.15, 0, 1)
         var vCmd = 360 * align * align
         if swallowing > 0 { vCmd *= max(0.38, 1 - 0.22 * Float(swallowing)) }
         if pathI == path.count - 1 { vCmd = min(vCmd, max(70, toT.len * 2.2)) }
+        // Eases off before a corner: a fast robot can otherwise overshoot and circle the waypoint.
+        else { vCmd = min(vCmd, 170 + toT.len * 2.2) }
         vCmd *= 1 - 0.68 * clampf(heavy, 0, 1)
         driveRaw(v: vCmd * speedScale, w: wCmd, dt)
     }
@@ -529,7 +540,7 @@ final class Sim {
     func driveRaw(v vCmd: Float, w wCmd: Float, _ dt: Float) {
         let a: Float = 720 * speedScale
         v += clampf(vCmd - v, -a * dt, a * dt)
-        let aw: Float = 12
+        let aw: Float = 12 * speedScale
         w += clampf(wCmd - w, -aw * dt, aw * dt)
     }
 
@@ -617,7 +628,7 @@ final class Sim {
         if !picked {
             let l = rel.len
             let keep = R + 16
-            if on && f > R * 0.1 && abs(s) < R * 0.98 && l < R + 44 { return true }  // into the intake
+            if on && f > R * 0.1 && abs(s) < R * intakeWidth && l < R + 44 { return true }  // into the intake
             if l < keep {
                 let n = rel.unit
                 b.pos = pos + n * keep
@@ -643,7 +654,7 @@ final class Sim {
             if it.protected {
                 // Not for collecting: can be nudged by the robot, but always settles back on its spot.
                 _ = applyField(&it.icon, mass: it.mass, on: false, dt: dt)
-                it.icon.vel += (it.home - it.icon.pos) * 26 * dt
+                it.icon.vel += (it.rest - it.icon.pos) * 26 * dt
                 integrate(&it.icon, dt, damping: 7, mass: it.mass)
                 continue
             }
@@ -745,6 +756,10 @@ final class Sim {
     // MARK: - Emptying and putting back
 
     var emptyDuration: Float = 3.6
+    var emptyCap: Float = 5
+    var intakeWidth: Float = 0.98
+    var laneSpacing: Float = 1.6
+    static var dockXOverride: Float?
     var bagPos: V2 { dockPos - dockOut * (R * 1.5) }
     var emptyQueue: [Item] = []
     var emptyAcc: Float = 0
@@ -752,7 +767,7 @@ final class Sim {
 
     func prepareEmptying() {
         emptyQueue = items.filter { $0.inBin }
-        emptyDuration = clampf(Float(emptyQueue.count) * 0.09, 2.2, 5)
+        emptyDuration = clampf(Float(emptyQueue.count) * 0.09, min(2.2, emptyCap), emptyCap)
         emptyRate = Float(emptyQueue.count) / (emptyDuration * 0.9)
         emptyAcc = 0
     }

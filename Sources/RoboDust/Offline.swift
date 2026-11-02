@@ -161,7 +161,7 @@ enum Offline {
                     while let a = pendingA.first, ai.isReadyForMoreMediaData { ai.append(a); pendingA.removeFirst() }
                 }
                 drain()
-                while pendingV.count > 30 { Thread.sleep(forTimeInterval: 0.002); drain() }
+                while pendingV.count > 30 { RunLoop.main.run(until: Date().addingTimeInterval(0.002)); drain() }
             }
             frame += 1
             if s.phase == .finished { break }
@@ -172,12 +172,12 @@ enum Offline {
             while !pendingV.isEmpty || !pendingA.isEmpty {
                 while let v = pendingV.first, vIn!.isReadyForMoreMediaData { adaptor!.append(v.0, withPresentationTime: v.1); pendingV.removeFirst() }
                 while let a = pendingA.first, aIn!.isReadyForMoreMediaData { aIn!.append(a); pendingA.removeFirst() }
-                Thread.sleep(forTimeInterval: 0.002)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.002))
             }
             vIn?.markAsFinished(); aIn?.markAsFinished()
             let sem = DispatchSemaphore(value: 0)
             w.finishWriting { sem.signal() }
-            sem.wait()
+            while sem.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
             print("video", w.status.rawValue, w.error?.localizedDescription ?? "ok")
         }
     }
