@@ -81,6 +81,11 @@ protocol SimAudio: AnyObject {
     func tick()
     func chirp(_ notes: [(Float, Float)])
     func thud(_ amount: Float)
+    func setPurr(_ level: Float)
+    func hiss(_ seconds: Float)
+    func growl(_ seconds: Float)
+    func meow(_ which: Int, rate: Float, amp: Float)
+    func swat()
 }
 
 final class Sim {
@@ -155,6 +160,7 @@ final class Sim {
     var rng = SeededRNG(seed: 7)
     var tickBudget: Float = 0
     var onDoneOnce: (() -> Void)?
+    var cat: CatActor?
 
     init(size: V2, visibleMin: V2, visibleMax: V2, entries: [DesktopEntry]) {
         self.size = size
@@ -201,6 +207,8 @@ final class Sim {
 
     func step(_ dt: Float) {
         t += dt
+        cat?.update(self, dt)
+        audio?.setPurr(cat?.purrLevel ?? 0)
         if paused {
             brushSpeed *= exp(-dt * 6); v = 0; w = 0
             audio?.setMotor(level: 0.04, load: 0)
@@ -235,7 +243,7 @@ final class Sim {
         brushSpeed += ((suck ? 26 : 0) * (1 - heavy * 0.7) - brushSpeed) * min(1, dt * 3)
         lidarSpeed += ((phase == .dropping || phase == .done || phase == .tidied ? 0 : 16) - lidarSpeed) * min(1, dt * 2)
         let level: Float = suck ? 1 : ([.undocking, .scanning, .returning, .docking].contains(phase) ? 0.3 : 0)
-        audio?.setMotor(level: picked ? level * 0.6 : level, load: heavy)
+        audio?.setMotor(level: picked ? level * 0.6 : level, load: max(heavy, cat?.loadOnRobot ?? 0))
         battery = clampf(battery - (suck ? 0.0016 : 0) * dt, 0, 1)
         if phase == .emptying || phase == .done { battery = min(1, battery + dt * 0.01) }
     }
@@ -266,9 +274,10 @@ final class Sim {
             status = "Mapping your desktop"
             scanActive = min(1, scanActive + dt * 3)
             let rate: Float = 2.1
-            driveRaw(v: 0, w: rate, dt)
+            let swept = scanSweep > 2 * .pi
+            driveRaw(v: 0, w: swept ? 0 : rate, dt)
             let prev = scanSweep
-            scanSweep += rate * dt
+            if !swept { scanSweep += rate * dt }
             for it in items where !it.seen {
                 let d = it.icon.pos - pos
                 var a = atan2(d.y, d.x) - (-.pi / 2)
@@ -279,21 +288,21 @@ final class Sim {
                 }
             }
             if tickBudget > 1 { tickBudget = 0; audio?.tick() }
-            if scanSweep > 2 * .pi {
+            if scanSweep > 2 * .pi, cat?.holdsRobot(self) != true {
                 for it in items where !it.seen { it.seen = true; it.ping = 1 }
                 audio?.chirp([(880, 0.08), (1319, 0.14)])
                 beginCleaning()
             }
         case .cleaning:
             scanActive = max(0, scanActive - dt * 2)
-            status = heavy > 0.35 ? "Big file. Straining…" : "Cleaning"
+            status = cat?.note(self) ?? (heavy > 0.35 ? "Big file. Straining…" : "Cleaning")
             followPath(dt)
             if binCount >= binCapacity && remaining > 0 { goDock(mid: true); break }
             if pathI >= path.count {
                 if remaining == 0 { goDock(mid: false) } else { setPhase(.hunting); huntTarget = nil }
             }
         case .hunting:
-            status = "Picking up stragglers"
+            status = cat?.note(self) ?? "Picking up stragglers"
             if binCount >= binCapacity && remaining > 0 { goDock(mid: true); break }
             if huntTarget == nil || huntTarget!.icon.gone || huntTarget!.icon.ingesting {
                 huntTarget = nearestRemaining()
@@ -493,6 +502,7 @@ final class Sim {
 
     func followPath(_ dt: Float) {
         guard pathI < path.count else { driveRaw(v: 0, w: 0, dt); return }
+        if cat?.fighting == true { driveRaw(v: 0, w: 0, dt); return }
         // Mouse in the way: bump, back off, swing round, like a real one meeting a foot.
         if let m = maneuver {
             driveRaw(v: m.reverse > 0 ? -110 : 0, w: m.reverse > 0 ? 0 : m.dir * 2.6, dt)
@@ -510,10 +520,16 @@ final class Sim {
                 return
             }
         }
+        if let c = cat, t - lastBump > 1.2, c.robotContact(self) {
+            lastBump = t
+            bumper = 1; audio?.thud(0.3); audio?.chirp([(494, 0.07), (392, 0.09)])
+            maneuver = (0.34, 0.5, (c.pos - pos).dot(side) > 0 ? -1 : 1)
+            return
+        }
         var target = path[pathI]
         waypointT += dt
         let reach = (pathI == path.count - 1 ? R * 0.28 : R * 0.45) * max(1, speedScale)
-        if (target - pos).len < reach || waypointT > 14 {
+        if (target - pos).len < reach || waypointT > 14 || cat?.covers(target, self) == true {
             pathI += 1; waypointT = 0
             if pathI >= path.count { return }
             target = path[pathI]
@@ -525,6 +541,7 @@ final class Sim {
             let k = 1 - toT.len / (R * 1.4)
             aim = target + (path[pathI + 1] - target).unit * (R * 0.9 * k)
         }
+        if let c = cat { aim = c.steer(aim, self) }
         let err = wrapAngle(atan2(aim.y - pos.y, aim.x - pos.x) - heading)
         let wCmd = clampf(err * 4.2 * speedScale, -3.1 * speedScale, 3.1 * speedScale)
         let align = clampf(1 - abs(err) / 1.15, 0, 1)

@@ -1,13 +1,14 @@
 import AVFoundation
 import os
 
-/// Everything you hear is synthesised here: no audio files. Same code feeds the speakers and the video.
+/// Everything you hear is synthesised here, except the cat's meows, which are a real cat.
+/// Same code feeds the speakers and the video.
 final class Synth: SimAudio {
-    struct Voice { var kind: Int; var t: Float = 0; var dur: Float; var f0: Float; var f1: Float; var amp: Float; var delay: Float = 0; var lp: Float = 0; var lp2: Float = 0 }
+    struct Voice { var kind: Int; var t: Float = 0; var dur: Float; var f0: Float; var f1: Float; var amp: Float; var delay: Float = 0; var lp: Float = 0; var lp2: Float = 0; var a: Float = 0; var b: Float = 0; var c: Float = 0; var d: Float = 0 }
 
     private var lock = os_unfair_lock()
     private var pending: [Voice] = []
-    private var motorTarget: Float = 0, loadTarget: Float = 0, roarTarget: Float = 0
+    private var motorTarget: Float = 0, loadTarget: Float = 0, roarTarget: Float = 0, purrTarget: Float = 0
     var muted = false
     private var master: Float = 0.55
 
@@ -17,6 +18,7 @@ final class Synth: SimAudio {
     private var phase: Float = 0, phase2: Float = 0, phase3: Float = 0
     private var lpA: Float = 0, lpB: Float = 0, lpC: Float = 0, hp: Float = 0
     private var flutter: Float = 0
+    private var purr: Float = 0, purrPhase: Float = 0, purrBreath: Float = 0, purrLP: Float = 0
     private var noise: UInt32 = 0x12345
     let sampleRate: Float = 48000
 
@@ -67,6 +69,31 @@ final class Synth: SimAudio {
         enqueue([Voice(kind: 3, dur: 0.26, f0: 118, f1: 46, amp: 0.85 * a), Voice(kind: 1, dur: 0.09, f0: 1400, f1: 300, amp: 0.26 * a)])
     }
 
+    /// Four meows from one cat: Elix, recorded by Joseph Sardin for BigSoundBank (CC0).
+    static let meows: [[Float]] = (1...4).map { n in
+        guard let url = Bundle.main.url(forResource: "meow-\(n)", withExtension: "wav"),
+              let file = try? AVAudioFile(forReading: url),
+              let pcm = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: pcm)) != nil, let ch = pcm.floatChannelData else { return [] }
+        return Array(UnsafeBufferPointer(start: ch[0], count: Int(pcm.frameLength)))
+    }
+
+    // The cat's other sounds are still made here: a hiss is shaped noise, a growl an uneven buzz.
+    func setPurr(_ level: Float) { purrTarget = level }
+    func hiss(_ seconds: Float) { enqueue([Voice(kind: 4, dur: seconds, f0: 0, f1: 0, amp: 0.62)]) }
+    func growl(_ seconds: Float) { enqueue([Voice(kind: 5, dur: seconds, f0: 82, f1: 0, amp: 0.42)]) }
+    func meow(_ which: Int, rate: Float, amp: Float) {
+        let m = Synth.meows[which]
+        guard !m.isEmpty else { return }
+        enqueue([Voice(kind: 6, dur: Float(m.count) / sampleRate / rate, f0: rate, f1: Float(which), amp: amp)])
+    }
+    func swat() {
+        // A soft paw on hard plastic: a low pat with a small click on top.
+        enqueue([Voice(kind: 3, dur: 0.1, f0: 210, f1: 90, amp: 0.5),
+                 Voice(kind: 1, dur: 0.045, f0: 3000, f1: 900, amp: 0.2),
+                 Voice(kind: 2, dur: 0.018, f0: Float.random(in: 1500...2300), f1: 0, amp: 0.1)])
+    }
+
     @inline(__always) private func white() -> Float {
         noise ^= noise << 13; noise ^= noise >> 17; noise ^= noise << 5
         return Float(Int32(bitPattern: noise)) / 2147483648.0
@@ -108,6 +135,18 @@ final class Synth: SimAudio {
 
             var s = (hum * 0.14 + air * 0.42) * m + roarS * 0.62
 
+            // Purring: a soft rattle about 25 times a second, a little faster breathing out.
+            purr += (purrTarget - purr) * 0.0002
+            if purr > 0.002 {
+                purrBreath += dt / 2.5; if purrBreath > 1 { purrBreath -= 1 }
+                let out = purrBreath < 0.58
+                purrPhase += (out ? 27 : 23) * dt; if purrPhase > 1 { purrPhase -= 1 }
+                let pulse = pow(max(0, sin(purrPhase * twoPi)), 3)
+                purrLP += (n * pulse - purrLP) * 0.075
+                let breath = sin(purrBreath * twoPi * (out ? 0.86 : 1.2)) * 0.5 + 0.5
+                s += (purrLP * 2.4 + sin(purrPhase * twoPi * 3) * pulse * 0.1) * purr * (0.5 + 0.5 * breath) * 0.6
+            }
+
             var j = 0
             while j < voices.count {
                 if voices[j].delay > 0 { voices[j].delay -= dt; j += 1; continue }
@@ -130,6 +169,26 @@ final class Synth: SimAudio {
                     let ff = voices[j].f1 + (voices[j].f0 - voices[j].f1) * pow(1 - min(p, 1), 3)
                     voices[j].lp += ff * dt
                     s += sin(voices[j].lp * twoPi) * pow(1 - min(p, 1), 2) * voices[j].amp
+                case 4: // hiss: air through teeth, with a spit at the start
+                    voices[j].lp += (n - voices[j].lp) * 0.62
+                    voices[j].lp2 += (voices[j].lp - voices[j].lp2) * 0.2
+                    let t = voices[j].t
+                    let spit: Float = t < 0.04 ? 1.7 : 1
+                    let env = min(1, t * 50) * pow(1 - min(p, 1), 0.55) * (1 + 0.22 * sin(t * 37 * twoPi))
+                    s += (voices[j].lp - voices[j].lp2) * env * spit * voices[j].amp * 1.8
+                case 5: // growl: a low, uneven buzz
+                    voices[j].a += voices[j].f0 * (1 + 0.5 * p) * (1 + n * 0.28) * dt
+                    if voices[j].a > 1 { voices[j].a -= 1 }
+                    let buzz = pow(1 - voices[j].a, 4) * 2 - 0.4
+                    voices[j].lp += (buzz - voices[j].lp) * 0.09
+                    let flut = 0.72 + 0.28 * sin(voices[j].t * 13 * twoPi)
+                    let env = min(1, voices[j].t * 5) * min(1, (1 - p) * 8)
+                    s += voices[j].lp * flut * env * voices[j].amp * 2
+                case 6: // meow: a recording, played a little faster or slower to change its pitch
+                    let m = Synth.meows[Int(voices[j].f1)]
+                    let at = voices[j].a, k = Int(at)
+                    if k + 1 < m.count { s += (m[k] + (m[k + 1] - m[k]) * (at - Float(k))) * voices[j].amp * 2 }
+                    voices[j].a += voices[j].f0
                 default: break
                 }
                 voices[j].t += dt

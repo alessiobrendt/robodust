@@ -22,10 +22,49 @@ if args.contains("--dump") || args.contains("--video") {
         if n.count == 4 { o.crop = CGRect(x: n[0], y: n[1], width: n[2], height: n[3]) }
     }
     o.plainFloor = args.contains("--plain-floor")
+    if let m = value("--cat"), let v = Int(m) { o.catMood = CatActor.Mood(rawValue: v) }
+    if let m = value("--cat-pick"), let v = Float(m) { o.catPickAt = v }
+    o.catDropOnRobot = args.contains("--cat-on-robot")
     if let s = value("--far-pull"), let f = Float(s) { o.farPullAt = f }
     if let s = value("--follow"), let f = Int(s) { o.follow = f }
     if let s = value("--pixel-scale"), let f = Float(s) { o.pixelScale = f }
     try Offline.run(o)
+    exit(0)
+}
+
+if let dir = value("--cat-test") {
+    _ = NSApplication.shared
+    try CatTest.stills(to: dir)
+    try CatTest.clip(to: dir + "/cat-style-test.mp4")
+    try CatTest.clip(to: dir + "/cat-walk-closeup.mp4", closeUp: true)
+    exit(0)
+}
+
+if let path = value("--cat-sounds") {
+    _ = NSApplication.shared
+    try CatTest.soundSampler(to: path)
+    exit(0)
+}
+
+if let dir = value("--cat-fight") {
+    _ = NSApplication.shared
+    try CatTest.fightClip(to: dir + "/mood-swatter-closeup.mp4")
+    try CatTest.moodClip(.swatter, seconds: 30, to: dir + "/mood-swatter.mp4")
+    exit(0)
+}
+
+if let dir = value("--cat-drops") {
+    _ = NSApplication.shared
+    try CatTest.moodClip(.loaf, seconds: 24, to: dir + "/drop-loaf.mp4", pickAt: 11, onRobot: true)
+    try CatTest.moodClip(.swatter, seconds: 20, to: dir + "/drop-swatter.mp4", pickAt: 9, onRobot: true)
+    exit(0)
+}
+
+if let dir = value("--cat-moods") {
+    _ = NSApplication.shared
+    try CatTest.moodClip(.supervisor, seconds: 18, to: dir + "/mood-supervisor.mp4", pickAt: 9)
+    try CatTest.moodClip(.loaf, seconds: 24, to: dir + "/mood-loaf.mp4")
+    try CatTest.moodClip(.rider, seconds: 34, to: dir + "/mood-rider.mp4")
     exit(0)
 }
 
@@ -89,9 +128,16 @@ if args.contains("--auto") { controller.autoDemo = true }
 controller.updateTestLog = value("--update-test")
 if args.contains("--auto-putback") { controller.autoPutBack = true }
 controller.telemetryPath = value("--telemetry")
+if args.contains("--no-save") { Model.persists = false }
+// Dev only: always the same mood, to check one at a time. 0 Supervisor, 1 Loaf, 2 Rider, 3 Swatter.
+if let m = value("--cat"), let v = Int(m), let mood = CatActor.Mood(rawValue: v) {
+    controller.model.hasCat = true
+    controller.forcedCatMood = mood
+}
 if let root = value("--test-root") {
     // Dev only: a throwaway folder stands in for the desktop, and settings aren't saved.
     Model.persists = false
+    FileOps.historyEnabled = false
     controller.testRoot = URL(fileURLWithPath: root)
     controller.model.source = .real
     if let m = value("--test-mode"), let v = Int(m), let c = CleanMode(rawValue: v) { controller.model.mode = c }

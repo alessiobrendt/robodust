@@ -210,7 +210,11 @@ enum FileOps {
         appendLog(lines.joined(separator: "\n"))
     }
 
+    /// Test runs on a throwaway folder stay out of the real history.
+    static var historyEnabled = true
+
     static func appendLog(_ text: String) {
+        guard historyEnabled else { return }
         let stamp = ISO8601DateFormatter().string(from: Date())
         guard let data = "[\(stamp)] \(text)\n".data(using: .utf8) else { return }
         if let h = try? FileHandle(forWritingTo: historyURL) {

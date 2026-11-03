@@ -31,7 +31,7 @@ final class Renderer {
     let sizePts: V2
     let pixelFormat: MTLPixelFormat = .bgra8Unorm
 
-    var pBg, pSprite, pShadowSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade: MTLRenderPipelineState!
+    var pBg, pSprite, pShadowSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pCat: MTLRenderPipelineState!
     var gridBuf: MTLBuffer!
     var gridCount = 0
     var wall: MTLTexture!
@@ -78,6 +78,7 @@ final class Renderer {
         pShadow = try pipe("shadowVS", "shadowFS")
         pDock = try pipe("dockVS", "dockFS")
         pLidar = try pipe("lidarVS", "lidarFS")
+        pCat = try pipe("catVS", "catFS")
         pStamp = try pipe("stampVS", "stampFS", blend: false, format: .rgba8Unorm, mask: .all)
         do {
             let d = MTLRenderPipelineDescriptor()
@@ -302,7 +303,9 @@ final class Renderer {
 
         drawDock(sim, e, &g)
         drawParticles(sim, e, &g)
+        drawCat(sim, e, &g, above: false)
         drawRobot(sim, e, &g)
+        drawCat(sim, e, &g, above: true)
         draw(late, tex: iconTex, shadows: false)
         e.endEncoding()
     }

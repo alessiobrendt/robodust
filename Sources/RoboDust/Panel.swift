@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 private let accent = Color(red: 0.36, green: 0.84, blue: 0.98)
+private let amber = Color(red: 0.98, green: 0.72, blue: 0.2)
 
 func fmtBytes(_ b: Int64) -> String {
     let f = ByteCountFormatter(); f.countStyle = .file; f.includesActualByteCount = false
@@ -90,6 +91,14 @@ struct PanelView: View {
     var setup: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let r = model.result { resultCard(r) }
+            if model.supportCard != .hidden { supportCard }
+            // After a clean, the result is all there is to look at. Done brings the settings back.
+            if model.result == nil { settings }
+        }
+    }
+
+    var settings: some View {
+        VStack(alignment: .leading, spacing: 16) {
             field("Clean") {
                 Picker("", selection: $model.source) {
                     Text("Sample mess").tag(Source.sample)
@@ -114,6 +123,9 @@ struct PanelView: View {
             Toggle(isOn: $model.clearWindows) {
                 Text("Clear my windows so I can watch").font(.system(size: 13))
             }.toggleStyle(.switch).controlSize(.small)
+            Toggle(isOn: $model.hasCat) {
+                Text("I have a cat").font(.system(size: 13))
+            }.toggleStyle(.switch).controlSize(.small)
 
             if let n = model.note {
                 Text(n).font(.system(size: 12)).foregroundStyle(Color.orange).fixedSize(horizontal: false, vertical: true)
@@ -137,6 +149,32 @@ struct PanelView: View {
         case .trash: return "RoboDust will move your real files to the Trash. It leaves anything locked, just changed, or a code project alone."
         case .delete: return "RoboDust will permanently delete your real files. It leaves anything locked, just changed, or a code project alone."
         }
+    }
+
+    var supportCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if model.supportCard == .thanked {
+                (Text("Thank you!").fontWeight(.semibold) + Text(" That means a lot to one small robot.").foregroundColor(.secondary))
+                    .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+                Button("Close") { model.support(nil) }.buttonStyle(PanelButton(kind: .quiet))
+            } else {
+                (Text("Made you smile?").fontWeight(.semibold) + Text(" A star or a coffee helps me make more fun software.").foregroundColor(.secondary))
+                    .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 8) {
+                    Button { model.support(URL(string: "https://github.com/muhraufan/robodust")) } label: {
+                        Label { Text("Star on GitHub") } icon: { Image(systemName: "star.fill").foregroundStyle(amber) }
+                    }.buttonStyle(PanelButton(kind: .quiet))
+                    Button("Buy me a coffee") { model.support(URL(string: "https://www.buymeacoffee.com/notmegapixels")) }
+                        .buttonStyle(PanelButton(kind: .quiet))
+                    Button("No thanks") { model.support(nil) }
+                        .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 40).contentShape(Rectangle())
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(amber.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(amber.opacity(0.75), lineWidth: 1))
     }
 
     func resultCard(_ r: RunResult) -> some View {
@@ -436,6 +474,10 @@ enum PanelShot {
             one(d, dir + "/panel_real.png")
             let f = Model(); f.result = RunResult(title: "Moved 277 items to the Trash", detail: "4 left alone for safety.", canUndo: true); f.source = .real
             one(f, dir + "/panel_result.png")
+            f.supportCard = .asking
+            one(f, dir + "/panel_support.png")
+            f.supportCard = .thanked
+            one(f, dir + "/panel_thanks.png")
             let g = Model(); g.stage = .running; g.sim = s; g.phase = .done; g.total = 42; g.realRun = true; g.mode = .delete; g.skipFinalClick = true; g.deleteCountdown = 7; g.battery = 0.9; g.status = "All clean"
             one(g, dir + "/panel_countdown.png")
         }

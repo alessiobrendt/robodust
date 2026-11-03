@@ -37,7 +37,7 @@ There's also a sample mess, if you only want to watch the robot and not risk a t
 
 macOS doesn't let an app move Finder's icons around or squash them into a vacuum. So RoboDust cheats.
 
-It asks Finder where your icons are, grabs your wallpaper, and draws a copy of the whole desktop in a window that sits just above the real icons and below your other windows. Everything you see after that is the copy, drawn with Metal. The icons are little meshes that bend towards the intake, and the robot and dock are lit in a shader, so the light stays put when the robot turns. All the sounds are synthesised, there are no audio files.
+It asks Finder where your icons are, grabs your wallpaper, and draws a copy of the whole desktop in a window that sits just above the real icons and below your other windows. Everything you see after that is the copy, drawn with Metal. The icons are little meshes that bend towards the intake, and the robot and dock are lit in a shader, so the light stays put when the robot turns. All the sounds are synthesised, apart from the cat's meows, which are a real cat.
 
 When the clean is done it makes the real change, waits for Finder to catch up, and fades the copy away.
 
@@ -62,8 +62,8 @@ Bug reports and ideas are very welcome, and so are pull requests. Please read [C
 
 ## Thanks
 
-Updates are handled by [Sparkle](https://sparkle-project.org). The app is designed by me, [Raufan](https://muhraufan.com), with a lot of implementation help from Claude.
+Updates are handled by [Sparkle](https://sparkle-project.org). The meows are Elix, recorded by Joseph Sardin for [BigSoundBank](https://bigsoundbank.com/small-mewing-of-a-cat-s0098.html) (CC0). The app is designed by me, [Raufan](https://muhraufan.com), with a lot of implementation help from Claude.
 
-If it made you smile, a star is nice, and you can also [buy the robot a new bag](https://www.buymeacoffee.com/notmegapixels).
+If it made you smile, a star is nice, and you can also [buy me a coffee](https://www.buymeacoffee.com/notmegapixels).
 
 MIT license. See [LICENSE](LICENSE).

@@ -469,3 +469,278 @@ fragment float4 lidarFS(QuadOut in [[stage_in]], constant LidarU& u [[buffer(0)]
     float3 c = float3(.32, .86, 1.0);
     return float4(c * i, i * .55);
 }
+
+
+// ---------- the cat: designed like the robot, a soft matte object rather than an imitation of fur ----------
+struct CatU {
+    float2 center; float2 half_;
+    float4 spine[4];      // x, y, radius
+    float4 head;          // x, y, radius
+    float2 headDir; float2 shadowOffset;
+    float4 tail[9];
+    float4 paws[8];
+    float4 base; float4 stripe; float4 belly;
+    float whitePaws; float pattern; float alpha; float eyesOpen;
+    float earL; float earR; float pad0; float pad1;
+};
+
+static inline float catSmin(float a, float b, float k) { float h = saturate(0.5 + 0.5 * (b - a) / k); return mix(b, a, h) - k * h * (1 - h); }
+static inline float catCone(float2 p, float2 a, float2 b, float ra, float rb) {
+    float2 ba = b - a; float h = saturate(dot(p - a, ba) / max(dot(ba, ba), 1e-3));
+    return length(p - a - ba * h) - mix(ra, rb, h);
+}
+static inline float catHash(float2 p) { return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+static float catNoise(float2 p) {
+    float2 i = floor(p), f = fract(p); f = f * f * (3 - 2 * f);
+    return mix(mix(catHash(i), catHash(i + float2(1, 0)), f.x), mix(catHash(i + float2(0, 1)), catHash(i + float2(1, 1)), f.x), f.y);
+}
+static inline float catTri(float2 p, float2 a, float2 b, float2 c) {
+    float2 e0 = b - a, e1 = c - b, e2 = a - c, v0 = p - a, v1 = p - b, v2 = p - c;
+    float2 pq0 = v0 - e0 * saturate(dot(v0, e0) / dot(e0, e0));
+    float2 pq1 = v1 - e1 * saturate(dot(v1, e1) / dot(e1, e1));
+    float2 pq2 = v2 - e2 * saturate(dot(v2, e2) / dot(e2, e2));
+    float s = sign(e0.x * e2.y - e0.y * e2.x);
+    float2 d = min(min(float2(dot(pq0, pq0), s * (v0.x * e0.y - v0.y * e0.x)), float2(dot(pq1, pq1), s * (v1.x * e1.y - v1.y * e1.x))), float2(dot(pq2, pq2), s * (v2.x * e2.y - v2.y * e2.x)));
+    return -sqrt(d.x) * sign(d.y);
+}
+
+struct CatParts { float body, head, skull, ear, earInner, tail, paw, sock, leg, torso, all; };
+
+static CatParts catMap(float2 p, constant CatU& u) {
+    CatParts c;
+    float b = 1e5;
+    for (int i = 0; i < 3; i++) b = catSmin(b, catCone(p, u.spine[i].xy, u.spine[i + 1].xy, u.spine[i].z, u.spine[i + 1].z), 12);
+    float t = 1e5;
+    for (int i = 0; i < 8; i++) t = catSmin(t, catCone(p, u.tail[i].xy, u.tail[i + 1].xy, u.tail[i].z, u.tail[i + 1].z), 7);
+    float pw = 1e5, leg = 1e5, sock = 1e5;
+    for (int i = 0; i < 8; i++) if (u.paws[i].z > 0) {
+        if (u.paws[i].w > 0.5) {
+            // Not a foot: a shoulder or haunch, shaping the body's outline.
+            b = catSmin(b, length(p - u.paws[i].xy) - u.paws[i].z, 14);
+            continue;
+        }
+        // A slim leg that comes out from under the body, ending in a slightly long foot.
+        float2 joint = i < 2 ? u.spine[2].xy : u.spine[0].xy;
+        float2 toe = normalize(u.paws[i].xy - joint) * u.paws[i].z * 0.45;
+        pw = min(pw, catCone(p, u.paws[i].xy - toe, u.paws[i].xy + toe, u.paws[i].z, u.paws[i].z * 0.9));
+        sock = min(sock, length(p - u.paws[i].xy - toe * 0.9) - u.paws[i].z);
+        leg = min(leg, catCone(p, joint, u.paws[i].xy, u.paws[i].z * 1.2, u.paws[i].z * 0.85));
+    }
+    float2 hc = u.head.xy, d = u.headDir, s = float2(-d.y, d.x);
+    float r = u.head.z;
+    float2 q = p - hc;
+    float2 lq = float2(dot(q, d), dot(q, s)) / r;
+    // A cat's skull from above: wide at the cheeks, tapering to a short muzzle.
+    float taper = 1 + 0.42 * saturate(lq.x + 0.05) * saturate(lq.x + 0.05);
+    float skull = (length(float2(lq.x * 0.90, lq.y * (0.97 * taper))) - 1) * r;
+    float ear = 1e5, inner = 1e5;
+    for (int k = -1; k <= 1; k += 2) {
+        float fk = float(k);
+        float tw = k < 0 ? u.earL : u.earR;
+        // Upright, slightly forward, set wide: small enough to feel like a cat, not a mascot.
+        float2 tip = hc + (d * (-0.30 + tw * 0.26) + s * fk * (1.30 - tw * 0.1)) * r;
+        float2 a = hc + (d * 0.16 + s * fk * 0.70) * r, b2 = hc + (-d * 0.68 + s * fk * 0.42) * r;
+        ear = min(ear, catTri(p, a, b2, tip) - 2.8);
+        float2 ic = (a + b2 + tip) / 3;
+        inner = min(inner, catTri(p, mix(a, ic, 0.34), mix(b2, ic, 0.34), mix(tip, ic, 0.3)));
+    }
+    c.body = b; c.leg = leg; c.skull = skull; c.head = catSmin(skull, ear, 5); c.ear = ear; c.earInner = inner; c.tail = t; c.paw = pw; c.sock = sock;
+    float all = catSmin(b, c.head, 11);       // a neck, rather than a ball resting on a body
+    all = catSmin(all, t, 6);
+    c.torso = all;
+    c.all = catSmin(all, min(leg, pw), 3);
+    return c;
+}
+
+static inline float catDome(float d, float r) { float e = saturate(-d / r); return r * sqrt(1 - (1 - e) * (1 - e)); }
+
+static inline float catSmax(float a, float b, float k) { return -catSmin(-a, -b, k); }
+
+static float catHeight(float2 p, constant CatU& u) {
+    CatParts c = catMap(p, u);
+    // One continuous form with soft swellings added on top, so no part has a seam where it joins.
+    float h = catDome(c.torso, 30) * 0.9;
+    h += 4 * saturate(-c.body / 18);
+    // Legs are their own low forms, which the body sits over.
+    h = max(h, catDome(min(c.leg, c.paw), 8) * 0.85 + 1.2 * saturate(-c.paw / 6));
+    float2 q = p - u.head.xy, d = u.headDir, s = float2(-d.y, d.x);
+    float2 lq = float2(dot(q, d), dot(q, s)) / u.head.z;
+    float skullBump = saturate(-c.skull / (u.head.z * 0.5));
+    h += skullBump * skullBump * (3 - 2 * skullBump) * 9;
+    h += skullBump * 2.6 * exp(-(lq.y * lq.y * 8 + (lq.x - 0.55) * (lq.x - 0.55) * 5));
+    h += skullBump * 1.5 * exp(-((abs(lq.y) - 0.4) * (abs(lq.y) - 0.4) * 16 + (lq.x - 0.12) * (lq.x - 0.12) * 14));
+    // Ears: raised at the rim, cupped in the middle.
+    float earBump = saturate(-c.ear / 4);
+    // Where an ear crosses the shoulder it stays low, so it can't read as a fold in the neck.
+    float overBody = 1 - 0.65 * saturate(-c.body / 10);
+    h += earBump * earBump * (3 - 2 * earBump) * 4 * (1 - skullBump) * overBody;
+    h -= 2.2 * saturate(-c.earInner / 3.5) * (1 - skullBump) * overBody;
+    return h;
+}
+
+vertex QuadOut catVS(uint vid [[vertex_id]], constant CatU& u [[buffer(0)]], constant Globals& g [[buffer(1)]]) {
+    float2 q = kQuad[vid] * u.half_;
+    QuadOut o; o.pos = toClip(u.center + q, g.viewport); o.p = u.center + q; return o;
+}
+
+fragment float4 catFS(QuadOut in [[stage_in]], constant CatU& u [[buffer(0)]]) {
+    float2 p = in.p;
+    CatParts c = catMap(p, u);
+    if (c.all > 34 + 1.7 * length(u.shadowOffset)) discard_fragment();
+    float px = max(fwidth(p.x), 0.001);
+
+    // Two-part shadow, built the same way as the robot's.
+    float tight = 1 - smoothstep(-3.0, 8.0, catMap(p - float2(2, 3.5), u).all);
+    float wide = 1 - smoothstep(-16.0, 24.0, catMap(p - u.shadowOffset * 1.7, u).all);
+    float sh = 1 - (1 - tight * 0.40) * (1 - wide * 0.27);
+
+    float edge = 1 - smoothstep(-px, px, c.all);
+    if (edge <= 0 && sh <= 0.003) discard_fragment();
+
+    const float E = 1.2;
+    float hx = catHeight(p + float2(E, 0), u) - catHeight(p - float2(E, 0), u);
+    float hy = catHeight(p + float2(0, E), u) - catHeight(p - float2(0, E), u);
+    // Only a hint of nap: soft-touch, not fur.
+    float grainX = catNoise(p * 2.4) - 0.5, grainY = catNoise(p * 2.4 + 37.0) - 0.5;
+    float3 N = normalize(float3(-(hx / (2 * E)) * 0.72 + grainX * 0.05, -(hy / (2 * E)) * 0.72 + grainY * 0.05, 1));
+
+    // Where we are along and across the spine, for markings that follow the body.
+    float along = 0, across = 1e5, soFar = 0, radiusHere = 40, flank = 1;
+    for (int i = 0; i < 3; i++) {
+        float2 a = u.spine[i].xy, ba = u.spine[i + 1].xy - a; float l = max(length(ba), 1e-3);
+        float h = saturate(dot(p - a, ba) / (l * l));
+        float d = length(p - a - ba * h);
+        if (d < across) {
+            across = d; along = soFar + h * l; radiusHere = mix(u.spine[i].z, u.spine[i + 1].z, h);
+            flank = ba.x * (p.y - a.y) - ba.y * (p.x - a.x) >= 0 ? 1 : -1;
+        }
+        soFar += l;
+    }
+    float side = saturate(across / max(radiusHere, 1.0f));
+
+    // Short coat: tone follows the body, and fine streaks run along it. Barely visible, but it's what
+    // separates this from a smooth toy.
+    float2 hairUV = float2(along * 0.55, across * 3.1);
+    float hair = (catNoise(hairUV) - 0.5) + 0.5 * (catNoise(hairUV * 2.3 + 11.0) - 0.5);
+    float3 col = u.base.rgb;
+    int pat = int(u.pattern + 0.5);
+    float tiny = px * 1.2;
+    if (c.body < 0 || c.paw < 0 || c.leg < 0) {
+        // Natural countershading: darker down the spine, paler on the flanks.
+        col *= mix(0.86, 1.08, smoothstep(0.1, 0.95, side));
+        if (pat == 1) {
+            // Mackerel tabby: narrow, soft-edged bars that wander and fade out towards the belly.
+            // Each flank has its own bars, unevenly spaced and broken up: matched pairs meeting at the
+            // spine read as a ribcage.
+            float warp = (catNoise(p * 0.055) - 0.5) * 11.0;
+            float v = along + side * side * 5 + warp + flank * 9.0;
+            float wave = 0.5 + 0.5 * sin(v * 0.40 + 1.8 * catNoise(float2(along * 0.045, flank * 7.0)));
+            float broken = smoothstep(0.28, 0.52, catNoise(float2(along * 0.09 + flank * 13.0, side * 3.2)));
+            // Markings stop before the spine ends, where its distance field would turn them into rings.
+            float onSpine = smoothstep(6.0, 22.0, along) * (1 - smoothstep(soFar - 8, soFar + 2, along));
+            float bars = smoothstep(0.62, 0.94, wave) * (1 - smoothstep(0.55, 0.98, side)) * smoothstep(0.1, 0.28, side) * onSpine * broken;
+            col = mix(col, u.stripe.rgb, bars * 0.58);
+            float dorsal = (1 - smoothstep(0.02, 0.16, side)) * onSpine;
+            col = mix(col, u.stripe.rgb, dorsal * 0.5);
+        }
+        col *= 1 + hair * 0.04 + (catNoise(p * 0.11) - 0.5) * 0.045;
+    }
+    if (c.tail < 0 && c.body >= 0) {
+        float fromTip = length(p - u.tail[8].xy);
+        if (pat == 1) {
+            float wave = 0.5 + 0.5 * sin(fromTip * 0.27);
+            col = mix(col, u.stripe.rgb, smoothstep(0.55, 0.95, wave) * 0.75);
+            col = mix(col, u.stripe.rgb, (1 - smoothstep(8.0, 20.0, fromTip)) * 0.8);
+        }
+        if (pat == 2) col = mix(col, u.belly.rgb, 1 - smoothstep(7.0, 15.0, fromTip));
+    }
+    if (c.head >= 0 && c.body >= 0) col = mix(col, u.belly.rgb, u.whitePaws * 0.9 * (1 - smoothstep(-2.5, 1.5, c.sock)));
+
+    // The face.
+    float2 q = p - u.head.xy, d = u.headDir, s = float2(-d.y, d.x);
+    float2 lq = float2(dot(q, d), dot(q, s)) / u.head.z;
+    if (c.head < 0) {
+        col = u.base.rgb;
+        col *= mix(0.9, 1.04, smoothstep(0.1, 1.0, abs(lq.y)));
+        col *= 1 + (catNoise(float2(lq.x * 9, lq.y * 22)) - 0.5) * 0.06;
+        if (pat == 1) {
+            // The tabby's forehead lines, soft and fine.
+            float lines = 0;
+            for (int k = -1; k <= 1; k++) {
+                float cx = float(k) * (0.14 + 0.09 * saturate(-lq.x));
+                float along2 = smoothstep(-0.95, -0.72, lq.x) * (1 - smoothstep(-0.1, 0.2, lq.x));
+                lines = max(lines, (1 - smoothstep(0.018, 0.075, abs(lq.y - cx))) * along2);
+            }
+            col = mix(col, u.stripe.rgb, lines * 0.78);
+        }
+        // Muzzle fades in rather than having an edge.
+        float muz = length(float2((lq.x - 0.92) * 1.5, lq.y * 1.75));
+        float muzzle = 1 - smoothstep(0.2, 0.62, muz);
+        if (pat == 2) {
+            float blaze = (1 - smoothstep(0.0, 0.11, abs(lq.y) - (0.006 + 0.17 * pow(saturate((lq.x - 0.1) * 1.05), 1.8)))) * smoothstep(-0.12, 0.28, lq.x);
+            muzzle = max(muzzle, blaze);
+        }
+        col = mix(col, u.belly.rgb, muzzle * (pat == 2 ? 0.92 : 0.72));
+        if (c.earInner < 0 && c.skull >= 0) {
+            float deep = saturate(-c.earInner / 3.5);
+            col = mix(col, u.base.rgb * 0.62 + float3(0.20, 0.12, 0.11), 0.85 * deep);
+        }
+    }
+
+    float ao = 1;
+    // The body shades the legs it stands over.
+    if (c.torso >= 0 && min(c.leg, c.paw) < 0) ao *= mix(0.74, 1.0, smoothstep(0.0, 7.0, c.torso));
+    // Head and tail sit on the body and shade it softly.
+    if (c.head >= 0 && c.body < 0) ao *= 1 - 0.20 * (1 - smoothstep(-6.0, 22.0, catMap(p - float2(2, 5), u).skull));
+    // Soft-touch, not plastic: the same light as the robot, but with a velvety sheen at the edges
+    // where plastic would darken. That's what stops the outline reading as drawn.
+    float3 L = normalize(float3(-.46, -.62, .64));
+    float diff = saturate(dot(N, L) * .72 + .28);
+    float sky = .52 + .48 * N.z;
+    float3 lit = col * (diff * float3(1.02, 1, .97) * .86 + sky * float3(.36, .38, .42)) * ao;
+    float rim = pow(1 - saturate(N.z), 2.2);
+    float lum = dot(col, float3(0.3, 0.59, 0.11));
+    // Dark coats need more sheen, or their shape disappears.
+    lit += mix(col, float3(1), 0.25 + 0.25 * (1 - lum)) * rim * (0.17 + 0.42 * (1 - lum) * (1 - lum));
+    float3 H = normalize(L + float3(0, 0, 1));
+    lit += pow(saturate(dot(N, H)), 12.0) * (0.04 + 0.075 * (1 - lum));
+
+    if (c.head < 0) {
+        // Seen from above, you only catch the top of a cat's eyes: two narrow, slanted glints.
+        for (int k = -1; k <= 1; k += 2) {
+            float fk = float(k);
+            float2 c0 = float2(0.36, fk * 0.42);
+            float2 r0 = lq - c0;
+            float ang = fk * 0.5, ca = cos(ang), sa = sin(ang);
+            float2 e = float2(ca * r0.x - sa * r0.y, sa * r0.x + ca * r0.y) / float2(0.052, 0.135);
+            if (u.eyesOpen > 0.5) {
+                float eye = 1 - smoothstep(0.82, 1.12, length(e));
+                lit = mix(lit, float3(0.05, 0.04, 0.035), eye * 0.92);
+                float glint = 1 - smoothstep(0.08, 0.3, length(e - float2(0.1, -0.3)));
+                lit = mix(lit, float3(0.75), glint * eye * 0.45);
+            } else {
+                float eye = 1 - smoothstep(0.35, 0.8, abs(e.x) + e.y * e.y * 0.4);
+                lit = mix(lit, lit * 0.55, eye * (1 - smoothstep(0.85, 1.1, abs(e.y))));
+            }
+        }
+        float2 nq = float2((lq.x - 1.02) / 0.035, lq.y / 0.06);
+        lit = mix(lit, float3(0.46, 0.31, 0.29), 1 - smoothstep(0.7, 1.15, length(nq)));
+    }
+    // Whiskers: fine, short and nearly invisible until you look.
+    float wh = 0;
+    for (int k = -1; k <= 1; k += 2) for (int w = 0; w < 2; w++) {
+        float fw = float(w) - 0.5;
+        float2 a = float2(0.72 + fw * 0.08, float(k) * 0.34), b = a + float2(fw * 0.34 - 0.08, float(k) * 0.74);
+        float2 pa = lq - a, ba = b - a; float h = saturate(dot(pa, ba) / dot(ba, ba));
+        float dw = length(pa - ba * h);
+        wh = max(wh, (1 - smoothstep(0.004, 0.014, dw)) * (1 - h));
+    }
+
+    float a = edge * u.alpha;
+    float3 outCol = lit * a;
+    float wa = wh * u.alpha * 0.32;
+    outCol = outCol * (1 - wa) + float3(0.93) * wa;
+    float alphaOut = max(a, wa);
+    float shadow = sh * u.alpha * (1 - alphaOut);
+    return float4(outCol, alphaOut + shadow);
+}

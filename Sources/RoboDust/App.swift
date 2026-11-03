@@ -27,6 +27,7 @@ final class StageView: MTKView, MTKViewDelegate {
     }
     override func mouseDown(with e: NSEvent) {
         let p = point(e)
+        if let c = sim.cat, c.hit(p, sim) { c.pick(sim); return }
         if sim.hitRobot(p) { sim.pickUp(); sim.picked = true; return }
         if let it = sim.hitItem(p), !it.icon.ingesting {
             grabbed = it; it.grabbed = true; lastDrag = p; dragVel = .zero
@@ -34,6 +35,7 @@ final class StageView: MTKView, MTKViewDelegate {
     }
     override func mouseDragged(with e: NSEvent) {
         let p = point(e)
+        if let c = sim.cat, c.picked { c.drag(to: p, sim); return }
         if sim.picked { sim.drag(robotTo: p); return }
         if let g = grabbed {
             g.icon.pos = p
@@ -42,6 +44,7 @@ final class StageView: MTKView, MTKViewDelegate {
         }
     }
     override func mouseUp(with e: NSEvent) {
+        sim.cat?.drop(sim)
         if sim.picked { sim.dropRobot() }
         if let g = grabbed { g.grabbed = false; g.icon.vel = dragVel; g.icon.angV = dragVel.x * 0.006; grabbed = nil }
     }
@@ -74,6 +77,8 @@ final class StageView: MTKView, MTKViewDelegate {
 
 enum Source: Int, CaseIterable, Identifiable { case sample, real; var id: Int { rawValue } }
 
+enum SupportCard { case hidden, asking, thanked }
+
 final class Model: ObservableObject {
     enum Stage { case ready, preparing, running, finished }
     @Published var stage = Stage.ready
@@ -87,6 +92,9 @@ final class Model: ObservableObject {
         didSet { if Model.persists { UserDefaults.standard.set(mode.rawValue, forKey: "afterClean") } }
     }
     /// Off by default: Trash and Delete wait for one final click once everything is collected.
+    @Published var hasCat = UserDefaults.standard.bool(forKey: "hasCat") {
+        didSet { if Model.persists { UserDefaults.standard.set(hasCat, forKey: "hasCat") } }
+    }
     @Published var skipFinalClick = UserDefaults.standard.bool(forKey: "skipFinalClick") {
         didSet { if Model.persists { UserDefaults.standard.set(skipFinalClick, forKey: "skipFinalClick") } }
     }
@@ -95,6 +103,7 @@ final class Model: ObservableObject {
     @Published var applying = false
     @Published var deleteCountdown: Int?
     @Published var result: RunResult?
+    @Published var supportCard = SupportCard.hidden
     @Published var excluded = Set<Int>()
     @Published var reviewOpen = false
     @Published var fileBytes: Int64 = 0
@@ -130,6 +139,7 @@ final class Model: ObservableObject {
     var about: () -> Void = {}
     var undo: () -> Void = {}
     var dismissResult: () -> Void = {}
+    var support: (URL?) -> Void = { _ in }
     var sendHome: () -> Void = {}
 }
 
@@ -157,6 +167,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     var telemetryPath: String?
     var autoPutBack = false
     var testRoot: URL?
+    var forcedCatMood: CatActor.Mood?
     var updateTestLog: String?
     let updates = Updates()
     var autoUpdateItems: [NSMenuItem] = []
@@ -187,6 +198,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         model.about = { [weak self] in self?.showAbout() }
         model.undo = { [weak self] in self?.runUndo() }
+        model.support = { [weak self] link in
+            guard let self else { return }
+            if let link { NSWorkspace.shared.open(link); self.model.supportCard = .thanked }
+            else { self.model.supportCard = .hidden }
+        }
         model.dismissResult = { [weak self] in self?.model.result = nil; self?.undoAction = nil }
         model.sendHome = { [weak self] in
             guard let s = self?.sim, [.cleaning, .hunting].contains(s.phase) else { return }
@@ -296,7 +312,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         panel = p
         panelHost = host
         // Grow and shrink with the content, keeping the bottom edge where it is.
-        Publishers.MergeMany(model.$stage.map { _ in () }.eraseToAnyPublisher(), model.$phase.map { _ in () }.eraseToAnyPublisher(), model.$note.map { _ in () }.eraseToAnyPublisher(), model.$outcome.map { _ in () }.eraseToAnyPublisher(), model.$mode.map { _ in () }.eraseToAnyPublisher(), model.$reviewOpen.map { _ in () }.eraseToAnyPublisher(), model.$result.map { _ in () }.eraseToAnyPublisher(), model.$deleteCountdown.map { _ in () }.eraseToAnyPublisher(), model.$applying.map { _ in () }.eraseToAnyPublisher())
+        Publishers.MergeMany(model.$stage.map { _ in () }.eraseToAnyPublisher(), model.$phase.map { _ in () }.eraseToAnyPublisher(), model.$note.map { _ in () }.eraseToAnyPublisher(), model.$outcome.map { _ in () }.eraseToAnyPublisher(), model.$mode.map { _ in () }.eraseToAnyPublisher(), model.$reviewOpen.map { _ in () }.eraseToAnyPublisher(), model.$result.map { _ in () }.eraseToAnyPublisher(), model.$deleteCountdown.map { _ in () }.eraseToAnyPublisher(), model.$applying.map { _ in () }.eraseToAnyPublisher(), model.$supportCard.map { _ in () }.eraseToAnyPublisher())
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.fitPanel() }
             .store(in: &bag)
@@ -309,6 +325,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard abs(h - p.frame.height) > 1 else { return }
         var f = p.frame
         f.size.height = h
+        // Never past the edge of the screen, wherever the panel was left.
+        if let v = (p.screen ?? NSScreen.main)?.visibleFrame {
+            f.origin.y = max(min(f.origin.y, v.maxY - h), v.minY)
+        }
         p.setFrame(f, display: true, animate: false)
     }
 
@@ -320,6 +340,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         var entries: [DesktopEntry]
         model.note = nil
         model.result = nil
+        model.supportCard = .hidden
         undoAction = nil
         if let root = testRoot {
             entries = DesktopReader.sandbox(root, size: screen.frame.size)
@@ -358,6 +379,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             let s = Sim(size: size, visibleMin: V2(0, top), visibleMax: V2(size.x, size.y - bottom), entries: entries)
             for (i, sp) in sprites.enumerated() { s.items[i].color = sp.average }
             s.mode = model.mode
+            if model.hasCat { s.cat = forcedCatMood.map(CatActor.pick) ?? CatActor.random() }
             model.outcome = nil
             s.skipFinalClick = false   // handled here, so that it goes through the real file action
             actionStarted = false
@@ -578,7 +600,20 @@ final class AppController: NSObject, NSApplicationDelegate {
         }, completionHandler: { [weak self] in
             self?.teardown()
             self?.model.stage = .ready
+            self?.offerSupportOnce()
         })
+    }
+
+    /// Once per Mac, ever, after a clean that finished properly. Nothing leaves the Mac: this
+    /// setting is the only record that it happened.
+    func offerSupportOnce() {
+        let key = "supportCardShown"
+        guard !UserDefaults.standard.bool(forKey: key), model.result?.isError != true else { return }
+        if Model.persists { UserDefaults.standard.set(true, forKey: key) }
+        model.supportCard = .asking
+        if let path = telemetryPath, let h = FileHandle(forWritingAtPath: path) {
+            h.seekToEndOfFile(); h.write("support card shown\n".data(using: .utf8)!); try? h.close()
+        }
     }
 
     func stopAndRestore() {

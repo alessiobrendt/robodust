@@ -20,6 +20,18 @@ enum Offline {
         var follow: Int = 0
         var farPullAt: Float?
         var plainFloor = false
+        var catMood: CatActor.Mood?
+        var catPickAt: Float?
+        var catDropOnRobot = false
+    }
+
+    /// Test case: someone picks the cat up, carries it off, and puts it down.
+    static func pickTest(_ pickAt: inout Float?, _ s: Sim, onRobot: Bool = false) {
+        guard let at = pickAt, let c = s.cat else { return }
+        if s.t >= at, s.t < at + 2.2 {
+            if !c.picked, s.t < at + 0.1 { if c.hit(c.pos, s) { c.pick(s) } else { pickAt = s.t + 0.5 } }
+            if c.picked { c.drag(to: onRobot ? s.pos : c.pos + V2(-1.2, 0.9) * 2, s) }
+        } else if c.picked, s.t >= at + 2.2 { c.drop(s) }
     }
 
     static func makeSim(_ o: Options, size: V2, r: Renderer, space: CGColorSpace, audio: SimAudio?) -> Sim {
@@ -44,6 +56,7 @@ enum Offline {
         s.mode = o.mode
         s.skipFinalClick = o.skip
         s.audio = audio
+        if let m = o.catMood { CatActor.trace = true; s.cat = CatActor.pick(mood: m) }
         return s
     }
 
@@ -99,6 +112,7 @@ enum Offline {
 
         while s.t < o.maxSeconds {
             s.step(1 / 120); s.step(1 / 120)
+            pickTest(&o.catPickAt, s, onRobot: o.catDropOnRobot)
             // Test case: a label and an icon get pulled in from the far side of the screen.
             if let at = o.farPullAt, s.t >= at {
                 let far = s.items.filter(\.onFloor).sorted { ($0.icon.pos - s.pos).len > ($1.icon.pos - s.pos).len }

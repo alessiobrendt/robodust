@@ -14,6 +14,7 @@ APP=build/RoboDust.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/RoboDust"
 cp Resources/Shaders.metal "$APP/Contents/Resources/Shaders.metal"
+cp Resources/Sounds/*.wav "$APP/Contents/Resources/"
 mkdir -p "$APP/Contents/Frameworks"
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
 ditto .build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"

@@ -136,6 +136,39 @@ enum ThanksVideo {
 
     // MARK: - Film
 
+    /// Writing sound and picture together stalls the writer, so they go in separately and get joined here.
+    static func attachSound(_ soundL: [Float], _ soundR: [Float], video videoPath: String, to path: String) throws {
+        let audioPath = path + ".audio.m4a"
+        for f in [path, audioPath] { try? FileManager.default.removeItem(atPath: f) }
+        // Sound.
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+        do {
+            let file = try AVAudioFile(forWriting: URL(fileURLWithPath: audioPath), settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192000])
+            let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(soundL.count))!
+            pcm.frameLength = AVAudioFrameCount(soundL.count)
+            soundL.withUnsafeBufferPointer { pcm.floatChannelData![0].update(from: $0.baseAddress!, count: soundL.count) }
+            soundR.withUnsafeBufferPointer { pcm.floatChannelData![1].update(from: $0.baseAddress!, count: soundR.count) }
+            try file.write(from: pcm)
+        }
+
+        // Join them.
+        let comp = AVMutableComposition()
+        let vAsset = AVURLAsset(url: URL(fileURLWithPath: videoPath)), aAsset = AVURLAsset(url: URL(fileURLWithPath: audioPath))
+        let duration = vAsset.duration
+        try comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
+            .insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: vAsset.tracks(withMediaType: .video)[0], at: .zero)
+        let audioRange = CMTimeRange(start: .zero, duration: min(duration, aAsset.duration))
+        try comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
+            .insertTimeRange(audioRange, of: aAsset.tracks(withMediaType: .audio)[0], at: .zero)
+        let export = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetPassthrough)!
+        export.outputURL = URL(fileURLWithPath: path); export.outputFileType = .mp4
+        let joined = DispatchSemaphore(value: 0)
+        export.exportAsynchronously { joined.signal() }
+        while joined.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        if export.status != .completed { throw export.error ?? NSError(domain: "RoboDust", code: 4) }
+        for f in [videoPath, audioPath] { try? FileManager.default.removeItem(atPath: f) }
+    }
+
     static func render(to path: String, frames: String?) throws {
         let device = MTLCreateSystemDefaultDevice()!
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -300,33 +333,7 @@ enum ThanksVideo {
         while done.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
         guard writer.status == .completed else { throw writer.error ?? NSError(domain: "RoboDust", code: 3) }
 
-        // Sound.
-        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
-        do {
-            let file = try AVAudioFile(forWriting: URL(fileURLWithPath: audioPath), settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192000])
-            let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(soundL.count))!
-            pcm.frameLength = AVAudioFrameCount(soundL.count)
-            soundL.withUnsafeBufferPointer { pcm.floatChannelData![0].update(from: $0.baseAddress!, count: soundL.count) }
-            soundR.withUnsafeBufferPointer { pcm.floatChannelData![1].update(from: $0.baseAddress!, count: soundR.count) }
-            try file.write(from: pcm)
-        }
-
-        // Join them.
-        let comp = AVMutableComposition()
-        let vAsset = AVURLAsset(url: URL(fileURLWithPath: videoPath)), aAsset = AVURLAsset(url: URL(fileURLWithPath: audioPath))
-        let duration = vAsset.duration
-        try comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
-            .insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: vAsset.tracks(withMediaType: .video)[0], at: .zero)
-        let audioRange = CMTimeRange(start: .zero, duration: min(duration, aAsset.duration))
-        try comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
-            .insertTimeRange(audioRange, of: aAsset.tracks(withMediaType: .audio)[0], at: .zero)
-        let export = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetPassthrough)!
-        export.outputURL = URL(fileURLWithPath: path); export.outputFileType = .mp4
-        let joined = DispatchSemaphore(value: 0)
-        export.exportAsynchronously { joined.signal() }
-        while joined.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
-        if export.status != .completed { throw export.error ?? NSError(domain: "RoboDust", code: 4) }
-        for f in [videoPath, audioPath] { try? FileManager.default.removeItem(atPath: f) }
+        try attachSound(soundL, soundR, video: videoPath, to: path)
         log(String(format: "film %.1fs written", Float(frame) / fps))
     }
 }

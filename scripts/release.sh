@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Builds a universal, Developer ID signed .app and .dmg in dist/, and notarizes when credentials exist.
 #   ROBODUST_VERSION=1.0 scripts/release.sh
+# People read docs/release-notes/<version>.html in the update window, so write that first.
 # Then scripts/publish.sh makes it live for everyone who has the app.
 # One-time setup for notarizing:
 #   xcrun notarytool store-credentials robodust-notary --key <AuthKey.p8> --key-id <id> --issuer <id>
@@ -8,6 +9,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION="${ROBODUST_VERSION:-0.1}"
 PROFILE="${NOTARY_PROFILE:-robodust-notary}"
+NOTES_FILE="docs/release-notes/$VERSION.html"
+[ -s "$NOTES_FILE" ] || { echo "No release notes: write $NOTES_FILE first"; exit 1; }
+if grep -q ']]>' "$NOTES_FILE"; then echo "$NOTES_FILE can't contain ]]>"; exit 1; fi
 IDENTITY=$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $2; exit}')
 [ -n "$IDENTITY" ] || { echo "No Developer ID Application certificate found"; exit 1; }
 
@@ -48,7 +52,7 @@ if [ $HAVE_NOTARY = 1 ]; then
   echo "notarized: $DMG"
   # The update feed entry, signed with the private key in this Mac's keychain.
   ATTRS=$(.build/artifacts/sparkle/Sparkle/bin/sign_update "$DMG")
-  NOTES="${RELEASE_NOTES:-Improvements and fixes.}"
+  NOTES=$(<"$NOTES_FILE")
   cat > dist/appcast.xml <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -60,7 +64,7 @@ if [ $HAVE_NOTARY = 1 ]; then
       <sparkle:version>$VERSION</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>$NOTES</p>]]></description>
+      <description><![CDATA[$NOTES]]></description>
       <enclosure url="https://robodust.muhraufan.com/releases/RoboDust-$VERSION.dmg" type="application/octet-stream" $ATTRS />
     </item>
   </channel>
