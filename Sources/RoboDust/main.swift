@@ -65,6 +65,8 @@ if let dir = value("--cat-moods") {
     try CatTest.moodClip(.supervisor, seconds: 18, to: dir + "/mood-supervisor.mp4", pickAt: 9)
     try CatTest.moodClip(.loaf, seconds: 24, to: dir + "/mood-loaf.mp4")
     try CatTest.moodClip(.rider, seconds: 34, to: dir + "/mood-rider.mp4")
+    try CatTest.moodClip(.saboteur, seconds: 24, to: dir + "/mood-saboteur.mp4")
+    try CatTest.moodClip(.coward, seconds: 40, to: dir + "/mood-coward.mp4")
     exit(0)
 }
 
@@ -138,6 +140,7 @@ if let root = value("--test-root") {
     // Dev only: a throwaway folder stands in for the desktop, and settings aren't saved.
     Model.persists = false
     FileOps.historyEnabled = false
+    FileOps.mountHidden = true
     controller.testRoot = URL(fileURLWithPath: root)
     controller.model.source = .real
     if let m = value("--test-mode"), let v = Int(m), let c = CleanMode(rawValue: v) { controller.model.mode = c }

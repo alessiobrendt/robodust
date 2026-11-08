@@ -46,6 +46,7 @@ struct DesktopEntry {
     var modified: Date? = nil
     var protectedReason: String? = nil   // Trash and Delete leave these alone
     var missing = false     // listed by Finder but not a file on the Desktop, such as a disk
+    var diskImage: FileOps.DiskImage? = nil   // a mounted disk image, which Trash and Delete eject
     var iCloud = false
 }
 
@@ -99,7 +100,34 @@ enum DesktopReader {
             result.append(entry(url: url, name: shown.atIndex(i)?.stringValue ?? nm, center: c))
         }
         if result.isEmpty { throw DesktopError.noItems }
+        markDiskImages(&result, FileOps.mountedImages())
         return result
+    }
+
+    /// Finder shows a mounted disk by its volume name. A read-only disk image becomes an item the
+    /// robot can collect, to eject. Anything else Finder shows stays as it was, left alone.
+    static func markDiskImages(_ entries: inout [DesktopEntry], _ images: [FileOps.DiskImage]) {
+        var byName: [String: [(FileOps.DiskImage, URL)]] = [:]
+        for d in images {
+            for m in d.mountPoints {
+                let name = (try? m.resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? m.lastPathComponent
+                byName[name, default: []].append((d, m))
+            }
+        }
+        for i in entries.indices {
+            if entries[i].missing {
+                // Two disks with the same name can't be told apart, so neither is touched.
+                guard let matches = byName[entries[i].url?.lastPathComponent ?? ""], matches.count == 1 else { continue }
+                let (d, mount) = matches[0]
+                entries[i].diskImage = d
+                entries[i].url = mount
+                entries[i].kind = .other
+                entries[i].bytes = (try? FileManager.default.attributesOfItem(atPath: d.image.path))?[.size] as? Int64 ?? 200_000
+                entries[i].protectedReason = d.writable ? "Writable disk image" : nil
+            } else if let u = entries[i].url, images.contains(where: { $0.writable && FileOps.samePath($0.image, u) }) {
+                entries[i].protectedReason = "Disk image in use"
+            }
+        }
     }
 
     static func entry(url: URL, name: String, center: V2) -> DesktopEntry {
@@ -128,9 +156,20 @@ enum DesktopReader {
     /// Dev only: treats a throwaway folder as if it were the desktop.
     static func sandbox(_ root: URL, size: CGSize) -> [DesktopEntry] {
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
-        return names.enumerated().map { i, n in
-            entry(url: root.appendingPathComponent(n), name: n, center: V2(Float(size.width) * 0.3 + Float(i % 8) * 130, 160 + Float(i / 8) * 120))
+        func spot(_ i: Int) -> V2 { V2(Float(size.width) * 0.3 + Float(i % 8) * 130, 160 + Float(i / 8) * 120) }
+        var result = names.enumerated().map { i, n in entry(url: root.appendingPathComponent(n), name: n, center: spot(i)) }
+        // Only disk images whose file is in the test folder stand in for disks on the desktop,
+        // so a test run can never eject anything of yours.
+        let images = FileOps.mountedImages().filter { $0.image.resolvingSymlinksInPath().path.hasPrefix(root.resolvingSymlinksInPath().path + "/") }
+        for d in images {
+            guard let m = d.mountPoints.first else { continue }
+            let name = (try? m.resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? m.lastPathComponent
+            var e = DesktopEntry(name: name, center: spot(result.count), bytes: 0, kind: .other, url: URL(fileURLWithPath: "/RoboDust-no-such-path").appendingPathComponent(name), image: nil)
+            e.missing = true
+            result.append(e)
         }
+        markDiskImages(&result, images)
+        return result
     }
 
     /// A believable mess that contains nothing of the user's. Same code path after this point.

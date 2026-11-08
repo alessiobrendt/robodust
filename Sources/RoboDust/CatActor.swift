@@ -1,10 +1,10 @@
-import Foundation
+import AppKit
 
 /// The cat in a clean. It's only for show: it watches the robot and gets in its way, and the most it
 /// can do is make the robot steer around it. Nothing here touches which files get collected.
 final class CatActor {
-    enum Mood: Int, CaseIterable { case supervisor, loaf, rider, swatter }
-    enum Next { case sit, loaf, crouch, mount, vanish }
+    enum Mood: Int, CaseIterable { case supervisor, loaf, rider, swatter, saboteur, coward }
+    enum Next { case sit, loaf, crouch, mount, scheme, hide, peek, vanish }
     enum Rest { case sit, loaf, crouch }
     enum State {
         case waiting
@@ -14,6 +14,8 @@ final class CatActor {
         case riding
         case hopping(from: V2, to: V2)
         case swatting
+        case scheming
+        case startled, cowering, peeking
         case gone
     }
 
@@ -34,6 +36,11 @@ final class CatActor {
     var eyeOpenUntil: Float = 0
     var bumps = 0, noteUntil: Float = 0
     var spoke = false, growled = false, hissedStare = 0, disturbed = false, hasFought = false
+
+    // The Saboteur.
+    var target: Item?
+    var pushDir = V2(0, 0), pushes = 0, pushT: Float = -1, planRow = 0
+    static let maxPushes = 3
     var yawLag: Float = 0
 
     // Being carried.
@@ -103,6 +110,8 @@ final class CatActor {
         if over {
             switch state {
             case .waiting: set(.gone, sim)
+            // Out of sight, it just stays there.
+            case .cowering: set(.gone, sim)
             case .gone, .hopping: break
             case .walking(_, _, .vanish): break
             case .riding, .climbing: hopOff(sim)
@@ -121,12 +130,16 @@ final class CatActor {
         case .riding: ride(sim, dt)
         case .hopping(let from, let to): hopTo(sim, from, to, dt)
         case .swatting: swat(sim, dt)
+        case .scheming: scheme(sim, dt)
+        case .startled: startle(sim, dt)
+        case .cowering: cower(sim, dt)
+        case .peeking: peek(sim, dt)
         }
     }
 
     func waitToEnter(_ sim: Sim) {
         switch mood {
-        case .supervisor:
+        case .supervisor, .coward:
             guard sim.phase == .scanning else { return }
             enter(sim, at: openSpot(sim), speed: 210, then: .sit)
         case .rider:
@@ -136,6 +149,12 @@ final class CatActor {
             guard sim.phase == .cleaning else { return }
             let then: Next = mood == .loaf ? .loaf : .crouch
             enter(sim, at: laneSpot(sim) ?? openSpot(sim), speed: 250, then: then)
+        case .saboteur:
+            guard sim.phase == .cleaning else { return }
+            if let plan = sabotagePlan(sim) {
+                target = plan.item; pushDir = plan.dir; planRow = plan.row
+                enter(sim, at: plan.spot, speed: 320, then: .scheme)
+            } else { enter(sim, at: openSpot(sim), speed: 210, then: .sit) }
         }
     }
 
@@ -162,6 +181,9 @@ final class CatActor {
             guard sim.phase == .undocking || sim.phase == .scanning else { rest = .sit; set(.sitting, sim); return }
             let away = (pos - sim.pos).unit
             target = sim.pos + away * (sim.R + 76)
+        case .scheme:
+            // The file went before the cat got there, or the robot is about to: on to the next one.
+            if let t = self.target, !t.onFloor || t.icon.ingesting || t.grabbed || (t.icon.pos - sim.pos).len < sim.R + 160 { plotNext(sim); return }
         case .loaf, .crouch:
             // The robot got there first, so pick a spot further along its route.
             if (target - sim.pos).len < sim.R + 150, sim.phase == .cleaning, let next = laneSpot(sim, after: sim.pathI + 1) {
@@ -188,6 +210,9 @@ final class CatActor {
         case .loaf: rest = .loaf; set(.loafing, sim)
         case .crouch: rest = .crouch; set(.crouching, sim)
         case .mount: set(.climbing(from: pos, fromHeading: heading), sim)
+        case .scheme: rest = .crouch; set(.scheming, sim)
+        case .hide: rest = .sit; set(.cowering, sim)
+        case .peek: rest = .crouch; set(.peeking, sim)
         case .vanish: set(.gone, sim)
         }
     }
@@ -258,6 +283,8 @@ final class CatActor {
             say(sim, 0, amp: 0.5)
         }
         keepClear(sim)
+        // The Coward doesn't wait to see what the robot does, and the dock emptying is far too loud.
+        if mood == .coward, (pos - sim.pos).len < sim.R + 520 || (sim.phase == .emptying && sim.phaseT > 0.7) { startleNow(sim); return }
         // The robot's coming this way: gets up and moves, unhurried, but not slowly.
         let toCat = pos - sim.pos
         if toCat.len < sim.R + 215, sim.v > 40, toCat.unit.dot(sim.fwd) > 0.25 {
@@ -450,6 +477,244 @@ final class CatActor {
         }
     }
 
+    // MARK: - The Saboteur
+
+    /// A file on the robot's route, far enough ahead for the cat to get there first. The cat crouches
+    /// on the route side of it, so a swipe sends it sliding out of the robot's way.
+    func sabotagePlan(_ sim: Sim) -> (item: Item, spot: V2, dir: V2, row: Int)? {
+        guard pushes < CatActor.maxPushes, sim.path.count > 1 else { return nil }
+        let start = max(sim.pathI, 0)
+        guard start + 1 < sim.path.count else { return nil }
+        // How far the robot drives before it starts each stretch of its route.
+        var routeTo = (sim.path[start] - sim.pos).len
+        for i in start..<(sim.path.count - 1) {
+            let a = sim.path[i], b = sim.path[i + 1], seg = b - a, l = seg.len
+            defer { routeTo += l }
+            guard l > sim.R * 2 else { continue }
+            let along = seg / l, across = along.perp
+            // Rows only: the robot turns at the ends, so a file there might never be passed.
+            guard abs(along.y) < 0.2 else { continue }
+            let candidates = sim.items.filter { it in
+                guard it.onFloor, !it.icon.ingesting, !it.grabbed, it !== target else { return false }
+                let d = it.icon.pos - a, t = d.dot(along)
+                guard t > l * 0.15 && t < l * 0.85 && abs(d.dot(across)) < sim.R * 0.9 else { return false }
+                // The cat has to get there, and settle, well before the robot does.
+                let robotTime = (routeTo + t) / 330, catTime = distanceToCat(it.icon.pos, sim) / 320
+                return robotTime > catTime + 1
+            }.sorted { ($0.icon.pos - a).dot(along) < ($1.icon.pos - a).dot(along) }
+            for it in candidates {
+                let side = (it.icon.pos - a).dot(across)
+                for sign: Float in [side >= 0 ? 1 : -1, side >= 0 ? -1 : 1] {
+                    let dir = across * sign
+                    let spot = it.icon.pos - dir * 80 * size, landing = it.icon.pos + dir * 240
+                    // Somewhere the file can actually slide to, with room for the cat beside it.
+                    if spot != clampToScreen(spot, sim) || sim.insideKeepOut(spot) { continue }
+                    if landing != clampToScreen(landing, sim) || sim.insideKeepOut(landing) { continue }
+                    return (it, spot, dir, i)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Before it's arrived, the cat is as far away as the nearest edge of the screen.
+    func distanceToCat(_ p: V2, _ sim: Sim) -> Float {
+        if case .waiting = state { return min(p.x, sim.size.x - p.x, p.y, sim.size.y - p.y) + 150 * size }
+        return (p - pos).len
+    }
+
+    func plotNext(_ sim: Sim) {
+        pushT = -1; reach = 0
+        if sim.phase == .cleaning, let plan = sabotagePlan(sim) {
+            target = plan.item; pushDir = plan.dir; planRow = plan.row
+            set(.walking(to: plan.spot, speed: 320, then: .scheme), sim)
+        } else {
+            // Done, or nothing left to knock over: it sits back to admire its work.
+            target = nil
+            set(.walking(to: openSpot(sim), speed: 220, then: .sit), sim)
+        }
+    }
+
+    /// Crouched by a file, eyes on the robot. When it gets close, one swipe sends the file sliding.
+    func scheme(_ sim: Sim, _ dt: Float) {
+        guard let t = target, t.onFloor, !t.icon.ingesting, !t.grabbed, sim.phase == .cleaning else { plotNext(sim); return }
+        let toFile = t.icon.pos - pos
+        let want = atan2(toFile.y, toFile.x)
+        heading = wrapAngle(heading + clampf(wrapAngle(want - heading) * 6, -4, 4) * dt)
+        let toRobot = wrapAngle(atan2(sim.pos.y - pos.y, sim.pos.x - pos.x) - heading)
+        easeWalk(0, dt)
+        if pushT < 0 {
+            // Watching the robot come, ready to swipe.
+            look += (clampf(toRobot, -0.9, 0.9) - look) * (1 - exp(-dt * 6))
+            earsBack += (0.5 - earsBack) * (1 - exp(-dt * 4))
+            wiggle += (0.35 - wiggle) * (1 - exp(-dt * 4))
+            // Swipes once the robot is driving down this row towards the file.
+            let r = t.icon.pos - sim.pos
+            let onRow = sim.pathI == planRow + 1
+            if stateT > 0.3, onRow, r.len < sim.R + 290, r.unit.dot(sim.fwd) > 0.2 { pushT = 0 }
+            // The robot has gone past this row, or it's taking far too long: try another file.
+            if sim.pathI > planRow + 1 || stateT > 40 { plotNext(sim) }
+            return
+        }
+        // The swipe, then a look straight at the robot, as if nothing happened.
+        let before = pushT
+        pushT += dt
+        let k = clampf(pushT / 0.3, 0, 1)
+        reach = pow(sin(k * .pi), 2)
+        wiggle = 0
+        look += (0 - look) * (1 - exp(-dt * 10))
+        if before < 0.15, pushT >= 0.15 {
+            t.icon.vel += pushDir * 1350 + pushDir.perp * Float.random(in: -140...140)
+            t.icon.angV += Float.random(in: -6...6)
+            t.icon.agit = max(t.icon.agit, 0.35)
+            pushes += 1
+            noteUntil = sim.t + 3
+            if CatActor.trace { print(String(format: "%6.1fs  cat: pushed a file away (%d)", sim.t, pushes)) }
+            sim.audio?.tick(); sim.audio?.thud(0.06)
+        }
+        if pushT > 0.3 { look += (clampf(toRobot, -1.1, 1.1) - look) * (1 - exp(-dt * 8)); earsBack *= exp(-dt * 3) }
+        if pushT > 0.75 {
+            if pushes == 1 { say(sim, 0, rate: 1.1, amp: 0.4) }
+            plotNext(sim)
+        }
+    }
+
+    // MARK: - The Coward
+
+    /// Somewhere to hide: under a window, or just off the edge of the screen. The cat sits at `inside`,
+    /// out of sight, and peeks from `peek`, with only its head showing.
+    struct Hideout { var cover: CGRect; var inside: V2; var peek: V2; var outward: V2 }
+    var hideout: Hideout?
+    var checkT: Float = 0
+
+    /// Where the windows are, in screen points from the top left. Only their outlines are read,
+    /// never what's in them. Test renders have no windows.
+    static var windows: () -> [CGRect] = {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        let me = ProcessInfo.processInfo.processIdentifier
+        return list.compactMap { w in
+            guard (w[kCGWindowLayer as String] as? Int) == 0, (w[kCGWindowOwnerPID as String] as? Int32) != me,
+                  ((w[kCGWindowAlpha as String] as? Double) ?? 1) > 0.5,
+                  let b = w[kCGWindowBounds as String] as? NSDictionary, let r = CGRect(dictionaryRepresentation: b as CFDictionary),
+                  r.width >= 260, r.height >= 180 else { return nil }
+            return r
+        }
+    }
+
+    func findHideout(_ sim: Sim) -> Hideout {
+        let screen = CGRect(x: 0, y: 0, width: CGFloat(sim.size.x), height: CGFloat(sim.size.y))
+        var options: [(Hideout, Float)] = []
+        func score(_ h: Hideout) -> Float { (h.peek - pos).len - 0.4 * (h.peek - sim.pos).len }
+        // Under a window, from the nearest edge of it that's on screen.
+        for w in CatActor.windows() {
+            let r = w.intersection(screen)
+            guard r.width >= 220, r.height >= 160 else { continue }
+            let c = V2(clampf(pos.x, Float(r.minX), Float(r.maxX)), clampf(pos.y, Float(r.minY), Float(r.maxY)))
+            let edges: [(Float, V2)] = [(abs(c.x - Float(r.minX)), V2(-1, 0)), (abs(Float(r.maxX) - c.x), V2(1, 0)),
+                                        (abs(c.y - Float(r.minY)), V2(0, -1)), (abs(Float(r.maxY) - c.y), V2(0, 1))]
+            let out = edges.min { $0.0 < $1.0 }!.1
+            var edge = c
+            if out.x < 0 { edge.x = Float(r.minX) } else if out.x > 0 { edge.x = Float(r.maxX) }
+            if out.y < 0 { edge.y = Float(r.minY) } else if out.y > 0 { edge.y = Float(r.maxY) }
+            if out.x != 0 { edge.y = clampf(edge.y, Float(r.minY) + 90, Float(r.maxY) - 90) } else { edge.x = clampf(edge.x, Float(r.minX) + 90, Float(r.maxX) - 90) }
+            let h = Hideout(cover: r, inside: edge - out * 150 * size, peek: edge - out * 42 * size, outward: out)
+            // A peek spot out in the open, not off the screen or in the dock.
+            let look = edge + out * 40
+            if look != clampToScreen(look, sim) || sim.insideKeepOut(look) { continue }
+            options.append((h, score(h)))
+        }
+        // Off the edge of the screen. The menu bar and the Dock count as edges too.
+        let bands: [(CGRect, V2)] = [
+            (CGRect(x: -400, y: -400, width: 400, height: CGFloat(sim.size.y) + 800), V2(1, 0)),
+            (CGRect(x: CGFloat(sim.size.x), y: -400, width: 400, height: CGFloat(sim.size.y) + 800), V2(-1, 0)),
+            (CGRect(x: -400, y: -400, width: CGFloat(sim.size.x) + 800, height: 400 + CGFloat(sim.wall.min.y)), V2(0, 1)),
+            (CGRect(x: -400, y: CGFloat(sim.wall.max.y), width: CGFloat(sim.size.x) + 800, height: 400), V2(0, -1)),
+        ]
+        for (band, inward) in bands {
+            var edge = pos
+            if inward.x > 0 { edge.x = 0 } else if inward.x < 0 { edge.x = sim.size.x }
+            if inward.y > 0 { edge.y = sim.wall.min.y } else if inward.y < 0 { edge.y = sim.wall.max.y }
+            edge = V2(clampf(edge.x, 120, sim.size.x - 120), clampf(edge.y, sim.wall.min.y + 120, sim.wall.max.y - 120))
+            if inward.x > 0 { edge.x = 0 } else if inward.x < 0 { edge.x = sim.size.x }
+            if inward.y > 0 { edge.y = sim.wall.min.y } else if inward.y < 0 { edge.y = sim.wall.max.y }
+            if sim.insideKeepOut(edge + inward * 60) { continue }
+            let out = inward
+            let h = Hideout(cover: band, inside: edge - out * 170 * size, peek: edge - out * 42 * size, outward: out)
+            options.append((h, score(h) + 120))
+        }
+        return options.min { $0.1 < $1.1 }!.0
+    }
+
+    /// Puffed up, hissing, then gone.
+    func startleNow(_ sim: Sim) {
+        rest = .crouch
+        noteUntil = sim.t + 3
+        sim.audio?.hiss(0.45)
+        set(.startled, sim)
+    }
+
+    func startle(_ sim: Sim, _ dt: Float) {
+        let away = pos - sim.pos
+        let want = atan2(away.y, away.x)
+        heading = wrapAngle(heading + clampf(wrapAngle(want + .pi - heading) * 8, -7, 7) * dt)
+        look = 0
+        puff += (1 - puff) * (1 - exp(-dt * 14))
+        earsBack = 1
+        hop = 0.18 * (stateT < 0.2 ? sin(stateT / 0.2 * .pi) : 0)
+        easeWalk(0, dt)
+        keepClear(sim)
+        if stateT > 0.6 {
+            hop = 0
+            let h = findHideout(sim)
+            hideout = h
+            set(.walking(to: h.inside, speed: 560, then: .hide), sim)
+        }
+    }
+
+    /// Out of sight. Every so often, once the robot is well away, it creeps out for a look.
+    func cower(_ sim: Sim, _ dt: Float) {
+        guard let h = hideout else { startleNow(sim); return }
+        puff *= exp(-dt * 1.5)
+        earsBack *= exp(-dt * 0.4)
+        turnTo(atan2(h.outward.y, h.outward.x), dt)
+        easeWalk(0, dt)
+        if !stillHidden(sim) { return }
+        if stateT > 4, (h.peek - sim.pos).len > 700, sim.phase == .cleaning || sim.phase == .hunting || sim.phase == .returning {
+            set(.walking(to: h.peek, speed: 90, then: .peek), sim)
+        }
+    }
+
+    /// Just its head out, watching the robot. Back under the moment it comes this way.
+    func peek(_ sim: Sim, _ dt: Float) {
+        guard let h = hideout else { startleNow(sim); return }
+        puff *= exp(-dt * 2)
+        turnTo(atan2(h.outward.y, h.outward.x), dt)
+        let toRobot = wrapAngle(atan2(sim.pos.y - pos.y, sim.pos.x - pos.x) - heading)
+        look += (clampf(toRobot, -1, 1) - look) * (1 - exp(-dt * 5))
+        earsBack += (0.6 - earsBack) * (1 - exp(-dt * 3))
+        easeWalk(0, dt)
+        if !stillHidden(sim) { return }
+        let r = pos - sim.pos
+        if r.len < sim.R + 480 || stateT > 9 {
+            set(.walking(to: h.inside, speed: r.len < sim.R + 480 ? 480 : 140, then: .hide), sim)
+        }
+    }
+
+    func turnTo(_ want: Float, _ dt: Float) { heading = wrapAngle(heading + clampf(wrapAngle(want - heading) * 5, -4, 4) * dt) }
+
+    /// Windows move and close. If its hiding place has gone, it finds another, fast.
+    func stillHidden(_ sim: Sim) -> Bool {
+        checkT += 1 / 120
+        guard checkT > 1.5, let h = hideout else { return true }
+        checkT = 0
+        let onScreen = h.cover.minX >= 0 && h.cover.maxX <= CGFloat(sim.size.x) && h.cover.minY >= 0 && h.cover.maxY <= CGFloat(sim.size.y)
+        guard onScreen else { return true }
+        let p = CGPoint(x: CGFloat(h.inside.x), y: CGFloat(h.inside.y))
+        if CatActor.windows().contains(where: { $0.contains(p) }) { return true }
+        startleNow(sim)
+        return false
+    }
+
     // MARK: - Choosing spots
 
     func clampSpot(_ p: V2, _ sim: Sim) -> V2 {
@@ -519,7 +784,7 @@ final class CatActor {
         guard !picked else { return nil }
         switch state {
         case .loafing: return bumps >= 2 ? 92 + 80 : nil
-        case .sitting: return 92 + 72
+        case .sitting, .scheming: return 92 + 72
         default: return nil
         }
     }
@@ -556,7 +821,12 @@ final class CatActor {
 
     func note(_ sim: Sim) -> String? {
         guard sim.t < noteUntil else { return nil }
-        return mood == .swatter ? "Under attack" : "There's a cat in the way"
+        switch mood {
+        case .swatter: return "Under attack"
+        case .saboteur: return "The cat knocked a file away"
+        case .coward: return "The cat ran off to hide"
+        default: return "There's a cat in the way"
+        }
     }
 
     /// The robot stops dead while it's being hit.
@@ -568,7 +838,7 @@ final class CatActor {
         switch state {
         // A cat on board comes first: anywhere on the robot picks up the cat, not the robot.
         case .riding: return (p - sim.pos).len < sim.R
-        case .sitting, .loafing, .crouching: break
+        case .sitting, .loafing, .crouching, .scheming, .peeking: break
         case .walking(_, _, let then): if then == .vanish || then == .mount { return false }
         default: return false
         }
@@ -581,6 +851,8 @@ final class CatActor {
         case .sitting: home = (pos, .sit)
         case .loafing: home = (pos, .loaf)
         case .crouching: home = (pos, .crouch)
+        case .scheming: home = (pos, .scheme); pushT = -1; reach = 0
+        case .peeking: home = hideout.map { ($0.inside, .hide) }
         case .walking(let to, _, let then): home = (to, then)
         case .riding:
             // Lifted off the robot, it's a floor cat again, and it stays wherever it's put.

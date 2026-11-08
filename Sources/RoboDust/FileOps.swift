@@ -10,10 +10,98 @@ enum FileOps {
         var done: [Int] = []
         var failed: [(index: Int, reason: String)] = []
         var trashed: [Trashed] = []
+        var ejected: [Ejected] = []
+    }
+
+    // MARK: - Disk images
+
+    /// A mounted disk image, as hdiutil reports it.
+    struct DiskImage: Equatable {
+        var image: URL
+        var device: String
+        var mountPoints: [URL]
+        var writable: Bool
+    }
+    /// index is the robot's item, or nil for a disk ejected because its image file is going.
+    struct Ejectable { var index: Int?; var disk: DiskImage; var position: V2 }
+    struct Ejected { var image: URL; var position: V2; var index: Int? }
+
+    /// Test runs mount out of sight, so nothing appears on the real desktop.
+    static var mountHidden = false
+
+    /// Reading this changes nothing.
+    static func mountedImages() -> [DiskImage] {
+        let r = tool("/usr/bin/hdiutil", ["info", "-plist"])
+        guard r.status == 0,
+              let plist = try? PropertyListSerialization.propertyList(from: r.output, format: nil) as? [String: Any],
+              let images = plist["images"] as? [[String: Any]] else { return [] }
+        return images.compactMap { im in
+            guard let path = im["image-path"] as? String,
+                  let entities = im["system-entities"] as? [[String: Any]] else { return nil }
+            let devices = entities.compactMap { $0["dev-entry"] as? String }.sorted { $0.count < $1.count }
+            guard let device = devices.first else { return nil }
+            let mounts = entities.compactMap { $0["mount-point"] as? String }.map { URL(fileURLWithPath: $0, isDirectory: true) }
+            // Anything unclear counts as writable, which means it gets left alone.
+            let writable = (im["writeable"] as? Bool) ?? true
+            return DiskImage(image: URL(fileURLWithPath: path).standardizedFileURL, device: device, mountPoints: mounts, writable: writable)
+        }
+    }
+
+    static func samePath(_ a: URL, _ b: URL) -> Bool {
+        a.resolvingSymlinksInPath().standardizedFileURL.path == b.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// Ejects read-only disk images, never by force. Each is checked again first: still mounted,
+    /// the same image, and still read-only. Anything busy stays mounted and is reported.
+    static func eject(_ targets: [Ejectable]) -> Outcome {
+        var out = Outcome()
+        func fail(_ t: Ejectable, _ why: String) { if let i = t.index { out.failed.append((i, why)) } }
+        for t in targets {
+            let now = mountedImages()
+            guard let current = now.first(where: { $0.device == t.disk.device && samePath($0.image, t.disk.image) }) else {
+                fail(t, "No longer mounted"); continue
+            }
+            if current.writable { fail(t, "Writable disk image"); continue }
+            let r = tool("/usr/bin/hdiutil", ["detach", current.device])
+            if r.status == 0 && !mountedImages().contains(where: { $0.device == current.device }) {
+                if let i = t.index { out.done.append(i) }
+                out.ejected.append(Ejected(image: current.image, position: t.position, index: t.index))
+            } else {
+                fail(t, "In use, so it stayed mounted")
+            }
+        }
+        var lines = ["eject: \(out.ejected.count) ejected, \(targets.count - out.ejected.count) left mounted"]
+        lines += out.ejected.map { "  ejected \($0.image.path)" }
+        appendLog(lines.joined(separator: "\n"))
+        return out
+    }
+
+    /// Mounts images again, read-only, wherever their file is now. Used by Undo.
+    static func remount(_ items: [Ejected]) -> Int {
+        var count = 0
+        for e in items where FileManager.default.fileExists(atPath: e.image.path) {
+            var args = ["attach", "-readonly", "-noverify", "-noautofsck"]
+            if mountHidden { args.append("-nobrowse") }
+            if tool("/usr/bin/hdiutil", args + [e.image.path]).status == 0 { count += 1 }
+        }
+        appendLog("undo eject: mounted \(count) of \(items.count)")
+        return count
+    }
+
+    static func tool(_ path: String, _ args: [String]) -> (output: Data, status: Int32) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        let out = Pipe()
+        p.standardOutput = out; p.standardError = Pipe(); p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch { return (Data(), -1) }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (data, p.terminationStatus)
     }
 
     /// nil means safe to act on. Never follows links: acts on the link itself, not what it points to.
-    static func refusal(_ t: Target, root: URL) -> String? {
+    static func refusal(_ t: Target, root: URL, mounted: [DiskImage] = []) -> String? {
         let fm = FileManager.default
         let name = t.url.lastPathComponent
         if name.isEmpty || name == "." || name == ".." { return "Unsafe name" }
@@ -23,14 +111,17 @@ enum FileOps {
         if let then = t.modified, let now = attrs[.modificationDate] as? Date, abs(now.timeIntervalSince(then)) > 1 {
             return "Changed during the clean"
         }
+        // An image file stays while its disk is mounted, so the disk can't be pulled out from under it.
+        if mounted.contains(where: { samePath($0.image, t.url) }) { return "Its disk image is still mounted" }
         return nil
     }
 
     static func delete(_ targets: [Target], root: URL, done: @escaping (Outcome) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             var out = Outcome()
+            let mounted = mountedImages()
             for t in targets {
-                if let why = refusal(t, root: root) { out.failed.append((t.index, why)); continue }
+                if let why = refusal(t, root: root, mounted: mounted) { out.failed.append((t.index, why)); continue }
                 do { try FileManager.default.removeItem(at: t.url); out.done.append(t.index) }
                 catch { out.failed.append((t.index, error.localizedDescription)) }
             }
@@ -56,8 +147,9 @@ enum FileOps {
             var out = Outcome()
             var allowed: [Target] = []
             var direct: [Target] = []
+            let mounted = mountedImages()
             for t in targets {
-                if let why = refusal(t, root: root) { out.failed.append((t.index, why)) }
+                if let why = refusal(t, root: root, mounted: mounted) { out.failed.append((t.index, why)) }
                 else if isCloudOnly(t.url) { direct.append(t) }
                 else { allowed.append(t) }
             }
@@ -359,6 +451,34 @@ enum FileOps {
             print("SKIP position script: the desktop has no icons to check")
         } else { check("reads an icon position", false) }
         print("desktop freeform:", desktopIsFreeform())
+
+        // Disk images, built here and mounted out of sight. Only these test images are ever ejected.
+        let src = sandbox.appendingPathComponent("image-src"); try? fm.createDirectory(at: src, withIntermediateDirectories: true)
+        _ = make(src, "inside.txt")
+        let ro = root.appendingPathComponent("read-only.dmg"), rw = root.appendingPathComponent("writable.dmg")
+        _ = tool("/usr/bin/hdiutil", ["create", "-quiet", "-srcfolder", src.path, "-format", "UDZO", "-volname", "RoboDust Test RO", "-ov", ro.path])
+        _ = tool("/usr/bin/hdiutil", ["create", "-quiet", "-srcfolder", src.path, "-format", "UDRW", "-volname", "RoboDust Test RW", "-ov", rw.path])
+        let mine: (DiskImage) -> Bool = { samePath($0.image, ro) || samePath($0.image, rw) }
+        defer { for d in mountedImages() where mine(d) { _ = tool("/usr/bin/hdiutil", ["detach", d.device, "-force"]) } }
+        for u in [ro, rw] { _ = tool("/usr/bin/hdiutil", ["attach", "-nobrowse", "-noverify", "-noautofsck", u.path]) }
+        let found = mountedImages().filter(mine)
+        let roDisk = found.first { samePath($0.image, ro) }, rwDisk = found.first { samePath($0.image, rw) }
+        check("finds both test disk images", roDisk != nil && rwDisk != nil)
+        check("tells read-only from writable", roDisk?.writable == false && rwDisk?.writable == true)
+        if let r = roDisk, let w = rwDisk {
+            var t = Outcome()
+            wait { fin in trash([target(20, ro, modified: mod(ro))], root: root) { t = $0; fin() } }
+            check("refuses to trash an image file while it's mounted", fm.fileExists(atPath: ro.path) && t.failed.first?.reason == "Its disk image is still mounted")
+            let e = eject([Ejectable(index: 21, disk: r, position: V2(0, 0)), Ejectable(index: 22, disk: w, position: V2(0, 0))])
+            check("ejects the read-only image", e.done == [21] && !mountedImages().contains { samePath($0.image, ro) })
+            check("refuses the writable one, which stays mounted", e.failed.first?.index == 22 && mountedImages().contains { samePath($0.image, rw) })
+            mountHidden = true
+            check("undo mounts it again", remount(e.ejected) == 1 && mountedImages().contains { samePath($0.image, ro) })
+            // The writable image's device, but the read-only image's path: not the disk that was seen.
+            let swapped = DiskImage(image: r.image, device: w.device, mountPoints: r.mountPoints, writable: false)
+            let again = eject([Ejectable(index: 23, disk: swapped, position: V2(0, 0))])
+            check("a device now holding a different image is refused", again.failed.first?.index == 23 && mountedImages().contains { samePath($0.image, rw) })
+        }
         return allOK
     }
 }

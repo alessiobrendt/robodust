@@ -37,7 +37,8 @@ scripts/build.sh
 B=build/RoboDust.app/Contents/MacOS/RoboDust
 
 # Checks the file actions on throwaway files in the folder you give it.
-# One tiny test file goes to the real Trash and comes straight back.
+# One tiny test file goes to the real Trash and comes straight back. It also makes two small
+# disk images there and mounts them out of sight, to test ejecting. Nothing else gets ejected.
 mkdir -p /tmp/robodust-test && $B --fileops-test /tmp/robodust-test
 
 # Same idea for iCloud-only files. Needs iCloud Drive, and briefly syncs a few small test files.

@@ -241,6 +241,16 @@ struct PanelView: View {
     var awaitingChoice: Bool { model.phase == .done && model.mode != .tidy && !model.skipFinalClick && model.outcome == nil && !model.applying }
 
     var selectedCount: Int { model.total - model.excluded.count }
+    var selectedDisks: Int { model.diskIndices.subtracting(model.excluded).count }
+
+    var question: String {
+        let files = selectedCount - selectedDisks, d = selectedDisks
+        let disks = d == 1 ? "1 disk image" : "\(d) disk images"
+        let action = model.mode == .delete ? "Permanently delete \(files) items" : "Move \(files) items to the Trash"
+        if d == 0 { return action + "?" }
+        if files == 0 { return "Eject \(disks)?" }
+        return action + " and eject \(disks)?"
+    }
 
     var sizeLine: String {
         var parts: [String] = []
@@ -252,7 +262,7 @@ struct PanelView: View {
     var decision: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.mode == .delete ? "Permanently delete \(selectedCount) items?" : "Move \(selectedCount) items to the Trash?")
+                Text(question)
                     .font(.system(size: 13, weight: .semibold))
                 Text(decisionBody).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.realRun && model.usesICloud {
@@ -293,6 +303,7 @@ struct PanelView: View {
         guard model.realRun else { return "This is the sample mess, so nothing real will change." }
         var text = sizeLine.isEmpty ? "" : sizeLine + ". "
         text += model.mode == .delete ? "This can't be undone." : "You can get them back from the Trash."
+        if selectedDisks > 0 { text += " Ejecting a disk image doesn't delete its file." }
         if model.leftAlone > 0 { text += " \(model.leftAlone) left alone for safety." }
         return text
     }
@@ -472,6 +483,9 @@ enum PanelShot {
             let d = Model(); d.stage = .running; d.sim = s; d.status = "All clean"; d.phase = .done; d.total = 281; d.collected = 281; d.fileBytes = 2_600_000_000; d.folderCount = 3; d.leftAlone = 4; d.realRun = true; d.usesICloud = true; d.mode = .delete; d.skipFinalClick = false; d.battery = 0.9; d.runTime = 196; d.reviewOpen = true
             d.reviewRows = (0..<12).map { ($0, "Screenshot 2026-10-\(10 + $0) at 09.14.22.png") }
             one(d, dir + "/panel_real.png")
+            d.diskIndices = [10, 11]
+            d.reviewRows[10].name = "Figma Installer (disk image)"; d.reviewRows[11].name = "Xcode 27 beta (disk image)"
+            one(d, dir + "/panel_disks.png")
             let f = Model(); f.result = RunResult(title: "Moved 277 items to the Trash", detail: "4 left alone for safety.", canUndo: true); f.source = .real
             one(f, dir + "/panel_result.png")
             f.supportCard = .asking

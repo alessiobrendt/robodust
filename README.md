@@ -27,7 +27,7 @@ It leaves these alone on Trash and Delete runs:
 - folders with a `.git` inside
 - apps
 
-Disks are never touched. Each file gets checked again right before anything happens to it, so one that changed during the clean just flies back to where it was.
+Disks are never touched, with one exception: read-only disk images, like the installer you opened last month and forgot about. Those get ejected, never erased. Anything writable or in use stays mounted. Each file gets checked again right before anything happens to it, so one that changed during the clean just flies back to where it was.
 
 If your Desktop syncs with iCloud, it warns you, because anything you delete also goes from your other devices.
 

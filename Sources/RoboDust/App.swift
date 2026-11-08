@@ -105,6 +105,7 @@ final class Model: ObservableObject {
     @Published var result: RunResult?
     @Published var supportCard = SupportCard.hidden
     @Published var excluded = Set<Int>()
+    @Published var diskIndices: Set<Int> = []
     @Published var reviewOpen = false
     @Published var fileBytes: Int64 = 0
     @Published var folderCount = 0
@@ -388,13 +389,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             s.realRun = real
             model.realRun = real
             for it in s.items {
-                it.protected = it.entry.missing || (s.mode != .tidy && it.entry.protectedReason != nil)
+                // A read-only disk image is collected in Trash and Delete runs, to be ejected. Tidy up leaves disks where they are.
+                let ejectable = it.entry.diskImage != nil && s.mode != .tidy
+                it.protected = (it.entry.missing && !ejectable) || (s.mode != .tidy && it.entry.protectedReason != nil)
             }
             let collectable = s.items.filter { !$0.protected }
             model.excluded = []
             model.reviewOpen = false
-            model.reviewRows = collectable.map { ($0.index, $0.entry.name) }
-            model.fileBytes = collectable.filter { $0.entry.kind != .folder }.reduce(0) { $0 + $1.entry.bytes }
+            model.reviewRows = collectable.map { ($0.index, $0.entry.diskImage == nil ? $0.entry.name : "\($0.entry.name) (disk image)") }
+            model.diskIndices = Set(collectable.filter { $0.entry.diskImage != nil }.map(\.index))
+            model.fileBytes = collectable.filter { $0.entry.kind != .folder && $0.entry.diskImage == nil }.reduce(0) { $0 + $1.entry.bytes }
             model.folderCount = collectable.filter { $0.entry.kind == .folder }.count
             model.leftAlone = s.items.count - collectable.count
             model.usesICloud = collectable.contains { $0.entry.iCloud }
@@ -494,14 +498,19 @@ final class AppController: NSObject, NSApplicationDelegate {
         let root = testRoot ?? FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
         let excluded = model.excluded
         let chosen = s.items.filter { $0.inDock && !$0.protected && !excluded.contains($0.index) && $0.entry.url != nil }
-        let targets = chosen.map { FileOps.Target(index: $0.index, url: $0.entry.url!, modified: $0.entry.modified, position: $0.home) }
+        let files = chosen.filter { $0.entry.diskImage == nil }
+        let targets = files.map { FileOps.Target(index: $0.index, url: $0.entry.url!, modified: $0.entry.modified, position: $0.home) }
         // Global position, which is what Finder expects when restoring.
         let origin = screenOrigin
         let globalTargets = targets.map { t -> FileOps.Target in var g = t; g.position = t.position + origin; return g }
+        var ejects = chosen.compactMap { it in it.entry.diskImage.map { FileOps.Ejectable(index: it.index, disk: $0, position: it.home + origin) } }
         model.applying = true
         let started = CACurrentMediaTime()
-        let finish: (FileOps.Outcome) -> Void = { [weak self] o in
+        var ejected = FileOps.Outcome()
+        let finish: (FileOps.Outcome) -> Void = { [weak self] files in
             guard let self, let s = self.sim else { return }
+            var o = files
+            o.done += ejected.done; o.failed += ejected.failed; o.ejected = ejected.ejected
             self.report(choice, o, excludedCount: excluded.count)
             let failed = Set(o.failed.map(\.index))
             let back = s.items.filter { $0.inDock && (failed.contains($0.index) || excluded.contains($0.index)) }
@@ -512,8 +521,20 @@ final class AppController: NSObject, NSApplicationDelegate {
                 s.finishAfterAction(returning: back)
             }
         }
-        if choice == .delete { FileOps.delete(globalTargets, root: root, done: finish) }
-        else { FileOps.trash(globalTargets, root: root, done: finish) }
+        // Disks first: an image file can only go once its disk is ejected.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let mounted = FileOps.mountedImages()
+            for t in globalTargets {
+                if let d = mounted.first(where: { !$0.writable && FileOps.samePath($0.image, t.url) }), !ejects.contains(where: { $0.disk.device == d.device }) {
+                    ejects.append(FileOps.Ejectable(index: nil, disk: d, position: t.position))
+                }
+            }
+            ejected = FileOps.eject(ejects)
+            DispatchQueue.main.async {
+                if choice == .delete { FileOps.delete(globalTargets, root: root, done: finish) }
+                else { FileOps.trash(globalTargets, root: root, done: finish) }
+            }
+        }
     }
 
     var screenOrigin: V2 {
@@ -523,27 +544,43 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func report(_ choice: CleanMode, _ o: FileOps.Outcome, excludedCount: Int) {
-        let n = o.done.count
+        let disks = model.diskIndices
+        let n = o.done.filter { !disks.contains($0) }.count
+        let ejectedCount = o.ejected.count
+        let diskFails = o.failed.filter { disks.contains($0.index) }.count
+        let fileFails = o.failed.count - diskFails
+        func images(_ k: Int) -> String { k == 1 ? "1 disk image" : "\(k) disk images" }
         let noun = n == 1 ? "item" : "items"
         var title = choice == .delete ? "Permanently deleted \(n) \(noun)" : "Moved \(n) \(noun) to the Trash"
         var notes: [String] = []
-        if !o.failed.isEmpty { notes.append("\(o.failed.count) couldn't be \(choice == .delete ? "deleted" : "moved") and stayed on your desktop.") }
+        if ejectedCount > 0 { notes.append("Ejected \(images(ejectedCount)).") }
+        if fileFails > 0 { notes.append("\(fileFails) couldn't be \(choice == .delete ? "deleted" : "moved") and stayed on your desktop.") }
+        if diskFails > 0 { notes.append("\(images(diskFails)) stayed mounted, because \(diskFails == 1 ? "it was" : "they were") in use.") }
         if excludedCount > 0 { notes.append("\(excludedCount) kept, as you chose.") }
         if model.leftAlone > 0 { notes.append("\(model.leftAlone) left alone for safety.") }
-        if n == 0 { title = "Nothing was changed" }
+        if n == 0 { title = ejectedCount > 0 ? "Ejected \(images(ejectedCount))" : "Nothing was changed" }
+        if n == 0 && ejectedCount > 0 { notes.removeFirst() }
         let trashed = o.trashed
-        if choice == .trash && !trashed.isEmpty {
+        let toRemount = o.ejected
+        if choice == .trash && (!trashed.isEmpty || !toRemount.isEmpty) {
             undoAction = { [weak self] in
                 self?.model.result = RunResult(title: "Bringing items back…")
+                // Files first, so a disk image that went to the Trash is back in place before it's mounted again.
                 FileOps.undoTrash(trashed) { count in
-                    DispatchQueue.main.async {
-                        self?.model.result = RunResult(title: "Brought back \(count) \(count == 1 ? "item" : "items")",
-                                                       detail: count < trashed.count ? "\(trashed.count - count) are still in the Trash." : nil)
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let mountedAgain = FileOps.remount(toRemount)
+                        DispatchQueue.main.async {
+                            var parts: [String] = []
+                            if count < trashed.count { parts.append("\(trashed.count - count) are still in the Trash.") }
+                            if mountedAgain < toRemount.count { parts.append("\(images(toRemount.count - mountedAgain)) couldn't be mounted again.") }
+                            let total = count + mountedAgain
+                            self?.model.result = RunResult(title: "Brought back \(total) \(total == 1 ? "item" : "items")", detail: parts.isEmpty ? nil : parts.joined(separator: " "))
+                        }
                     }
                 }
             }
         }
-        model.result = RunResult(title: title, detail: notes.isEmpty ? nil : notes.joined(separator: " "), canUndo: undoAction != nil, isError: n == 0 && !o.failed.isEmpty)
+        model.result = RunResult(title: title, detail: notes.isEmpty ? nil : notes.joined(separator: " "), canUndo: undoAction != nil, isError: n == 0 && ejectedCount == 0 && !o.failed.isEmpty)
     }
 
     func runUndo() { let a = undoAction; undoAction = nil; a?() }

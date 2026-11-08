@@ -56,7 +56,7 @@ enum Offline {
         s.mode = o.mode
         s.skipFinalClick = o.skip
         s.audio = audio
-        if let m = o.catMood { CatActor.trace = true; s.cat = CatActor.pick(mood: m) }
+        if let m = o.catMood { CatActor.trace = true; CatActor.windows = { [] }; s.cat = CatActor.pick(mood: m) }
         return s
     }
 
