@@ -5,11 +5,15 @@ cd "$(dirname "$0")/.."
 VERSION="${ROBODUST_VERSION:-0.1}"
 if [ -n "${ROBODUST_UNIVERSAL:-}" ]; then
   swift build -c release --arch arm64 --arch x86_64 2>&1 | grep -E "error|Build complete" | tail -30
-  BIN=.build/apple/Products/Release/RoboDust
+  # Asked, not assumed: the folder moved once with an Xcode update, and an old binary got packaged.
+  BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/RoboDust"
 else
   swift build -c release 2>&1 | grep -E "error|Build complete" | tail -30
-  BIN=.build/release/RoboDust
+  BIN="$(swift build -c release --show-bin-path)/RoboDust"
 fi
+# Never package a binary older than the code it should contain.
+STALE=$(find Sources Package.swift -newer "$BIN" -type f | head -3)
+[ -z "$STALE" ] || { echo "Stale build: $BIN is older than $STALE"; exit 1; }
 APP=build/RoboDust.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/RoboDust"
