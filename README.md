@@ -1,5 +1,7 @@
 # RoboDust
 
+**RoboDust is made by [Raufan](https://muhraufan.com).** The only official downloads are here and on [robodust.muhraufan.com](https://robodust.muhraufan.com). If you see it presented as someone else's work, I'd really appreciate a heads-up.
+
 A robot vacuum for your Mac desktop. It drives around your screen and eats your files.
 
 ![RoboDust cleaning a messy desktop](docs/robodust.jpg)
@@ -11,6 +13,14 @@ I had 300-something things on my desktop, mostly screenshots, and no plans to so
 It works like a real one. It drops onto your desktop on its dock, maps the room with a lidar sweep, and cleans in rows. File names tear off before the icons go. Big files make it slow down and strain. When the bin is full it reverses onto the dock and empties itself, and you can watch the bag fill up. Pick it up while it's working and it will complain until you put it down.
 
 At the end you choose what happens to everything it collected: sort it into neat columns, move it to the Trash, or delete it for good.
+
+## A small request
+
+RoboDust is free and open source because I wanted to share something fun and a bit silly, and I'd love for people to use it, change it and build on it. For the love of the game. That's what the MIT license is for.
+
+It asks for one thing in return: keep my name and the license with any copy. A little respect for whoever made it. Shortly after I opened the code, someone posted RoboDust as their own, unchanged and with no credit, and it went viral. That stung more than I expected, since this is my first open-source project.
+
+So please, if you use it, take it apart, or make your own version, credit where it came from. It takes one line, and it's what keeps sharing like this fun.
 
 ## Yes, it really deletes things
 
