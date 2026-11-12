@@ -75,8 +75,94 @@ public sealed partial class Sim
             if (cone < 0.88f) continue;
             var k = FlameLevel * (1 - l / (R * 4.4f));
             it.Scorch = MathF.Min(1, it.Scorch + dt * 1.8f * k);
+            if (it.Scorch >= 1) StartBurn(it);   // too much: it catches fire
             it.Icon.Agit = MathF.Max(it.Icon.Agit, 0.35f * k);
             if (Rand() < dt * 10 * k) SpawnFun(PartKind.Smoke, it.Icon.Pos + new V2(Rand(-14, 14), Rand(-14, 14)), new V2(Rand(-20, 20), Rand(-40, -10)), Rand(0.9f, 1.6f), Rand(8, 14), 0.2f, 0.19f, 0.18f, 0.5f);
+        }
+    }
+
+    // MARK: Burning to ash
+
+    /// Taking something in. Normally it's swallowed; with the flamethrower on it burns to ash first,
+    /// and the robot vacuums up the ash.
+    void Take(Item it, bool icon)
+    {
+        if (!HasFlames) { StartIngest(it, icon); return; }
+        if (icon) StartBurn(it); else StartLabelBurn(it);
+    }
+
+    float burnSound, ashTick;
+
+    /// Something on fire right in front: the robot waits for it to burn down, so the ash goes straight in.
+    bool BurningAhead
+    {
+        get
+        {
+            if (!HasFlames) return false;
+            foreach (var it in Items) if (it.Burning && (it.Icon.Pos - Intake).Len < R * 1.6f) return true;
+            return false;
+        }
+    }
+
+    void StartBurn(Item it)
+    {
+        if (it.Burning || it.Icon.Ingesting || it.Protected || it.Icon.Gone) return;
+        it.Burning = true;
+        it.Scorch = 1;
+        // The flamethrower gives it a proper blast.
+        if (Phase is Phase.Cleaning or Phase.Hunting && !Picked) flameT = MathF.Max(flameT, 0.6f);
+        if (T - burnSound > 0.5f) { burnSound = T; Audio?.Flame(0.7f); }
+    }
+
+    void StartLabelBurn(Item it)
+    {
+        if (it.LabelBurning || it.Label.Gone || it.Protected) return;
+        it.LabelBurning = true;
+    }
+
+    void UpdateBurn(Item it, float dt)
+    {
+        // Big files take a little longer to go.
+        it.Burn = MathF.Min(1, it.Burn + dt / (0.55f + 0.08f * (it.Mass - 1)));
+        it.Scorch = 1;
+        it.Icon.Vel *= MathF.Exp(-dt * 6);
+        it.Icon.Pos += it.Icon.Vel * dt;
+        it.Icon.Agit = 0.18f;
+        var half = Metrics.IconHalf;
+        // Embers fly off the burning edge, flakes of ash drop where it stood.
+        if (Rand() < dt * 45)
+            SpawnFun(PartKind.Glow, it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), new V2(Rand(-30, 30), Rand(-70, -20)), Rand(0.35f, 0.8f), Rand(1.2f, 2.6f), 1, Rand(0.35f, 0.6f), 0.08f, 1);
+        if (Rand() < dt * 30) Ash(it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), 1);
+        if (Rand() < dt * 8) SpawnFun(PartKind.Smoke, it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), new V2(Rand(-15, 15), Rand(-35, -10)), Rand(1, 1.8f), Rand(8, 13), 0.2f, 0.19f, 0.18f, 0.45f);
+        if (it.Burn < 1) return;
+        // Gone: what's left is a little heap of ash for the robot to pick up.
+        it.Burning = false;
+        it.Icon.Gone = true;
+        if (it.LabelAttached) it.Label.Gone = true;
+        it.InBin = true; BinCount++; BinBytes += it.Entry.Bytes;
+        Collected++; CollectedBytes += it.Entry.Bytes;
+        Ash(it.Icon.Pos, 18 + (int)(it.Mass * 4));
+    }
+
+    void UpdateLabelBurn(Item it, float dt)
+    {
+        it.LabelBurn = MathF.Min(1, it.LabelBurn + dt / 0.5f);
+        it.Label.Vel *= MathF.Exp(-dt * 5);
+        it.Label.Pos += it.Label.Vel * dt;
+        if (Rand() < dt * 25) SpawnFun(PartKind.Glow, it.Label.Pos + new V2(Rand(-Metrics.LabelHalf.X, Metrics.LabelHalf.X) * 0.7f, Rand(-6, 6)), new V2(Rand(-20, 20), Rand(-50, -15)), Rand(0.3f, 0.6f), Rand(1, 2), 1, 0.5f, 0.1f, 1);
+        if (it.LabelBurn < 1) return;
+        it.LabelBurning = false;
+        it.Label.Gone = true;
+        Ash(it.Label.Pos, 6);
+    }
+
+    /// Grey flakes that settle on the floor until the robot's suction finds them.
+    void Ash(V2 at, int n)
+    {
+        for (int k = 0; k < n; k++)
+        {
+            var g = Rand(0.16f, 0.36f);
+            SpawnFun(PartKind.Ash, at + new V2(Rand(-14, 14), Rand(-14, 14)), new V2(Rand(-60, 60), Rand(-60, 60)), Rand(7, 11), Rand(2.2f, 4.5f), g, g * 0.97f, g * 0.94f, 0.95f, chip: 1);
         }
     }
 
@@ -195,6 +281,19 @@ public sealed partial class Sim
                 q.Vel *= MathF.Exp(-dt * 2.8f);
                 q.Ang += dt * (6 + q.Seed % 6);
                 break;
+            case PartKind.Ash:
+            {
+                // Lies where it fell until the suction gets near, then goes in like any other dust.
+                if (SuctionOn && !Picked)
+                {
+                    var d = Intake - q.Pos; var l = d.Len;
+                    if (l < R * 2.4f) q.Vel += d.Unit * (2600 * (1 - l / (R * 2.4f))) * dt;
+                    if (l < R * 0.45f) { q.Life = 0; ashTick += 0.12f; if (ashTick > 1) { ashTick = 0; Audio?.Tick(); } }
+                }
+                q.Vel *= MathF.Exp(-dt * 4.5f);
+                q.Ang += dt * q.Vel.Len * 0.02f;
+                break;
+            }
             case PartKind.Glow:
                 q.Vel *= MathF.Exp(-dt * 1.5f);
                 break;

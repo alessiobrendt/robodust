@@ -67,7 +67,7 @@ layout(location = 3) in vec4 i2;   // alpha, slice, pull, agit
 layout(location = 4) in vec4 i3;   // tint
 layout(location = 5) in vec4 i4;   // shadow offset, shadow alpha
 uniform int shadowPass;
-out vec2 uv; out float alpha; flat out float slice; out vec4 tint; out float shadowAlpha;
+out vec2 uv; out float alpha; flat out float slice; out vec4 tint; out float shadowAlpha; out float burn;
 
 vec2 warp(vec2 q) {
     vec2 center = i0.xy, half_ = i0.zw, intake = i1.xy;
@@ -102,18 +102,37 @@ void main() {
     uv = gq + .5; alpha = i2.x; slice = i2.y;
     tint = shadowPass == 1 ? vec4(0.0) : i3;
     shadowAlpha = shadowPass == 1 ? i4.z : 0.0;
+    burn = i4.w;
 }";
     public const string SpriteFS = Head + @"
-in vec2 uv; in float alpha; flat in float slice; in vec4 tint; in float shadowAlpha;
+in vec2 uv; in float alpha; flat in float slice; in vec4 tint; in float shadowAlpha; in float burn;
 uniform sampler2DArray tex; uniform int shadowPass;
 out vec4 o;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 void main() {
+    // Fun mode: burning to ash. Holes open where the noise is lowest and spread, with a glowing rim.
+    float edge = 0.0;
+    if (burn > 0.001) {
+        vec2 q = uv * vec2(7.0, 7.0) + vec2(slice * 3.17, slice * 1.31);
+        float n = vnoise(q) * 0.65 + vnoise(q * 2.7) * 0.35;
+        float t = burn * 1.15 - 0.08;
+        if (n < t) discard;
+        edge = 1.0 - smoothstep(0.0, 0.09, n - t);
+    }
     if (shadowPass == 1) {
         float a = texture(tex, vec3(uv, slice), 2.2).a;
-        o = vec4(0.0, 0.0, 0.0, a * shadowAlpha * alpha);
+        o = vec4(0.0, 0.0, 0.0, a * shadowAlpha * alpha * (1.0 - burn));
     } else {
         vec4 c = texture(tex, vec3(uv, slice));
         c.rgb = mix(c.rgb, tint.rgb * c.a, tint.a);
+        if (burn > 0.001) {
+            c.rgb = mix(c.rgb, vec3(0.05, 0.04, 0.035) * c.a, smoothstep(0.0, 0.45, burn) * 0.9);
+            c.rgb += vec3(1.0, 0.45, 0.08) * edge * c.a * 1.7;
+        }
         o = c * alpha;
     }
 }";

@@ -168,7 +168,7 @@ public sealed unsafe class Renderer
     struct Inst
     {
         public V2 Center, Half, Intake; public float Angle, Scale, Alpha, Slice, Pull, Agit;
-        public float TR, TG, TB, TA; public V2 ShadowOffset; public float ShadowAlpha;
+        public float TR, TG, TB, TA; public V2 ShadowOffset; public float ShadowAlpha, Burn;
     }
 
     // MARK: - Frame
@@ -215,6 +215,8 @@ public sealed unsafe class Renderer
                 {
                     Center = it.Icon.Pos + jitter, Half = iconHalf, Intake = flying ? far : intake, Angle = it.Icon.Ang + wob, Scale = scale,
                     Alpha = 1, Slice = it.Index, Pull = f.pull, Agit = flying || !f.near ? 0 : a,
+                    // Burnt things stay burnt on the way into the bag: charred scraps rather than whole icons.
+                    Burn = it.Flight == Flight.ToBag ? (it.Scorch > 0.99f ? 0.55f : 0) : it.Burn,
                     ShadowOffset = new V2(2, 3) + new V2(5, 9) * lift, ShadowAlpha = 0.34f * MathF.Max(lift, 0),
                 };
                 if (it.Ping > 0) { inst.TR = 0.45f; inst.TG = 0.95f; inst.TB = 1; inst.TA = it.Ping * 0.55f; }
@@ -241,7 +243,7 @@ public sealed unsafe class Renderer
                 var inst = new Inst
                 {
                     Center = lpos, Half = labelHalf, Intake = flying ? far : intake, Angle = lang, Scale = scale, Alpha = 1, Slice = it.Index,
-                    Pull = lf.Item1, Agit = flying ? 0 : a,
+                    Pull = lf.Item1, Agit = flying ? 0 : a, Burn = attached ? it.Burn : it.LabelBurn,
                 };
                 if (it.Ping > 0) { inst.TR = 0.55f; inst.TG = 0.97f; inst.TB = 1; inst.TA = it.Ping * 0.7f; }
                 if (flying || it.Label.Ingesting) topLabels.Add(inst); else groundLabels.Add(inst);
@@ -296,7 +298,7 @@ public sealed unsafe class Renderer
             inst[o + 4] = s.Intake.X; inst[o + 5] = s.Intake.Y; inst[o + 6] = s.Angle; inst[o + 7] = s.Scale;
             inst[o + 8] = s.Alpha; inst[o + 9] = s.Slice; inst[o + 10] = s.Pull; inst[o + 11] = s.Agit;
             inst[o + 12] = s.TR; inst[o + 13] = s.TG; inst[o + 14] = s.TB; inst[o + 15] = s.TA;
-            inst[o + 16] = s.ShadowOffset.X; inst[o + 17] = s.ShadowOffset.Y; inst[o + 18] = s.ShadowAlpha; inst[o + 19] = 0;
+            inst[o + 16] = s.ShadowOffset.X; inst[o + 17] = s.ShadowOffset.Y; inst[o + 18] = s.ShadowAlpha; inst[o + 19] = s.Burn;
         }
         Gl.BindVertexArray(spriteVao);
         Gl.BindBuffer(Gl.ARRAY_BUFFER, instBuf);

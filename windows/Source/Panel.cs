@@ -402,7 +402,7 @@ public sealed class Panel : Window
 
     string FunBlurb => model.Fun switch
     {
-        FunMode.Flames => "Ein Flammenwerfer vorne: Was im Weg liegt, wird angekokelt, bevor er es einsaugt. Nur zum Anschauen, deinen Dateien passiert nichts.",
+        FunMode.Flames => "Ein Flammenwerfer vorne: Alles im Weg verbrennt zu Asche, und die saugt er dann auf. Nur zum Anschauen, deinen Dateien passiert nichts.",
         FunMode.Bubbles => "Eine Seifenblasen-Pistole hinten. Die Blasen schweben übers Bild und platzen an deinen Symbolen.",
         FunMode.Confetti => "Konfetti für jedes eingesaugte Symbol, und am Ende feuert die Station eine Konfetti-Kanone ab.",
         FunMode.Disco => "Regenbogen-LEDs und bunte Lichtringe im Takt.",

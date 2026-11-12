@@ -66,7 +66,7 @@ RoboDust.exe --read-test
 
 ## Spaßmodus
 
-In den Einstellungen gibt es einen Spaßmodus: einen Flammenwerfer, der alles im Weg ankokelt, bevor der Roboter es einsaugt, eine Seifenblasen-Pistole, Konfetti für jedes Symbol und eine Konfetti-Kanone an der Station am Ende, Disco-Lichter, oder alles auf einmal. Das ist reine Show: Deinen Dateien passiert dadurch nichts, und ein angekokeltes Symbol sieht wieder ganz normal aus, sobald es zurück an seinem Platz ist.
+In den Einstellungen gibt es einen Spaßmodus: einen Flammenwerfer, der alles im Weg ankokelt, bevor der Roboter es einsaugt, eine Seifenblasen-Pistole, Konfetti für jedes Symbol und eine Konfetti-Kanone an der Station am Ende, Disco-Lichter, oder alles auf einmal. Mit Feuer verschwinden die Symbole nicht einfach im Roboter: Sie verkohlen, zerfallen mit glühendem Rand zu Asche, und der Roboter saugt die Asche auf. Das ist reine Show: Deinen Dateien passiert dadurch nichts, und ein angekokeltes Symbol sieht wieder ganz normal aus, sobald es zurück an seinem Platz ist.
 
 ## Mehrere Bildschirme
 

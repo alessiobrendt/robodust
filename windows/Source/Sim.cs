@@ -56,6 +56,9 @@ public sealed class Item
     public V2 Rest;
     public bool Protected;
     public float Scorch;     // fun mode only: how burnt the flamethrower has made it look. Just a picture.
+    public bool Burning;     // fun mode only: on fire, crumbling to ash
+    public float Burn, LabelBurn;   // 0...1, how much has turned to ash (a picture: the file is fine)
+    public bool LabelBurning;
 
     public Item(int index, DesktopEntry entry)
     {
@@ -70,7 +73,7 @@ public sealed class Item
     public bool OnFloor => !InBin && !InDock && Flight == Flight.None && !Icon.Gone && !Protected;
 }
 
-public enum PartKind { Dust = 0, Fire = 1, Smoke = 2, Bubble = 3, Confetti = 4, Glow = 5 }
+public enum PartKind { Dust = 0, Fire = 1, Smoke = 2, Bubble = 3, Confetti = 4, Glow = 5, Ash = 6 }
 
 public struct Particle
 {
@@ -314,7 +317,7 @@ public sealed partial class Sim
                     // Through a door if it's on another display, straight there if not.
                     path = Plan.Route(Pos, huntTarget.Icon.Pos, R + 2); PathI = 0;
                     // Something wedged out of reach: reel it in from a distance rather than circle forever.
-                    if (huntT > 7) StartIngest(huntTarget, true);
+                    if (huntT > 7) Take(huntTarget, true);
                 }
                 FollowPath(dt);
                 break;
@@ -456,7 +459,7 @@ public sealed partial class Sim
         Item best = null; float bd = float.PositiveInfinity;
         foreach (var it in Items)
         {
-            if (!it.OnFloor || it.Icon.Ingesting || it.Grabbed) continue;
+            if (!it.OnFloor || it.Icon.Ingesting || it.Burning || it.Grabbed) continue;
             var d = (it.Icon.Pos - Pos).Len;
             if (d < bd) { bd = d; best = it; }
         }
@@ -588,6 +591,7 @@ public sealed partial class Sim
         var align = M.Clamp(1 - MathF.Abs(err) / 1.15f, 0, 1);
         var vCmd = 360 * align * align;
         if (Swallowing > 0) vCmd *= MathF.Max(0.38f, 1 - 0.22f * Swallowing);
+        if (BurningAhead) vCmd *= 0.12f;   // fun mode: waits for it to burn down, then takes the ash
         if (PathI == path.Count - 1) vCmd = MathF.Min(vCmd, MathF.Max(70, toT.Len * 2.2f));
         // Eases off before a corner: a fast robot can otherwise overshoot and circle the waypoint.
         else vCmd = MathF.Min(vCmd, 170 + toT.Len * 2.2f);
@@ -735,6 +739,7 @@ public sealed partial class Sim
             if (!it.Icon.Gone)
             {
                 if (it.Grabbed) it.Icon.Agit = MathF.Max(it.Icon.Agit, 0.25f);
+                else if (it.Burning) UpdateBurn(it, dt);
                 else if (it.Icon.Ingesting)
                 {
                     AdvanceIngest(ref it.Icon, it.IngestTime, dt);
@@ -749,7 +754,7 @@ public sealed partial class Sim
                 }
                 else
                 {
-                    if (ApplyField(ref it.Icon, it.Mass, on, dt)) StartIngest(it, true);
+                    if (ApplyField(ref it.Icon, it.Mass, on, dt)) Take(it, true);
                     Integrate(ref it.Icon, dt, 5.5f);
                     PushOutOfDockItem(ref it.Icon);
                     ClampItem(ref it.Icon, 26);
@@ -760,15 +765,16 @@ public sealed partial class Sim
             if (it.LabelAttached && it.Icon.Agit > 0.62f + 0.25f * MathF.Sin(it.Icon.Seed * 13)) DetachLabel(it);
             if (!it.LabelAttached && !it.Label.Gone)
             {
-                if (it.Label.Ingesting) AdvanceIngest(ref it.Label, 0.3f, dt);
+                if (it.LabelBurning) UpdateLabelBurn(it, dt);
+                else if (it.Label.Ingesting) AdvanceIngest(ref it.Label, 0.3f, dt);
                 else
                 {
-                    if (ApplyField(ref it.Label, 0.32f, on, dt)) StartIngest(it, false);
+                    if (ApplyField(ref it.Label, 0.32f, on, dt)) Take(it, false);
                     if (it.Icon.Gone)
                     {
                         // Its icon is gone: a label left behind flutters a bit, then gets taken.
                         it.LabelLost += dt;
-                        if (it.LabelLost > 0.8f || (Intake - it.Label.Pos).Len < R * 2.6f) StartIngest(it, false);
+                        if (it.LabelLost > 0.8f || (Intake - it.Label.Pos).Len < R * 2.6f) Take(it, false);
                     }
                     Integrate(ref it.Label, dt, 3.6f);
                     it.Label.Vel += new V2(MathF.Sin(T * 7 + it.Label.Seed), MathF.Cos(T * 5.3f + it.Label.Seed * 2)) * 60 * it.Label.Agit * dt;
@@ -909,7 +915,7 @@ public sealed partial class Sim
                     it.Flight = Flight.None; it.InDock = false; it.InBin = false;
                     it.Icon.Pos = it.FlightTo; it.Icon.Ang = 0; it.Icon.Vel = V2.Zero; it.Icon.Gone = false; it.Icon.Agit = 0; it.Icon.AngV = 0;
                     it.LabelAttached = true; it.Label.Gone = false; it.Label.Ingesting = false; it.Label.Pull = 0; it.LabelLost = 0;
-                    it.FlightScale = 1; it.Land = 1; it.Scorch = 0;   // back home, as good as new
+                    it.FlightScale = 1; it.Land = 1; it.Scorch = 0; it.Burn = 0; it.LabelBurn = 0; it.Burning = false; it.LabelBurning = false;   // back home, as good as new
                     it.Rest = it.FlightTo;
                     tickBudget += 0.35f;
                     if (tickBudget > 1) { tickBudget = 0; Audio?.Tick(); }
