@@ -106,6 +106,7 @@ public static class Program
         if (Value("--test-root") is { } root)
         {
             // Dev only: a throwaway folder stands in for the desktop, and settings and history aren't saved.
+            if (!Directory.Exists(root)) { Console_(); Console.WriteLine("ERROR test root does not exist: " + root); return 2; }
             Settings.Persists = false;
             FileOps.HistoryEnabled = false;
             var parent = Path.GetDirectoryName(Path.GetFullPath(root).TrimEnd('\\'));

@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $out = Join-Path $PSScriptRoot 'dist'
 # Never package a stale binary.
+if (Get-Process RoboDust -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$out*" }) { throw "RoboDust laeuft noch aus dist. Bitte erst beenden (Tray-Symbol > Beenden), dann neu bauen." }
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 $common = @('publish', 'RoboDust.csproj', '-c', 'Release', '-r', 'win-x64', '-o', $out, '-p:PublishSingleFile=true', '-p:DebugType=none')
 if ($Small) {
