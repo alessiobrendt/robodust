@@ -68,10 +68,24 @@ RoboDust.exe --read-test
 
 In den Einstellungen gibt es einen Spaßmodus: einen Flammenwerfer, der alles im Weg ankokelt, bevor der Roboter es einsaugt, eine Seifenblasen-Pistole, Konfetti für jedes Symbol und eine Konfetti-Kanone an der Station am Ende, Disco-Lichter, oder alles auf einmal. Mit Feuer verschwinden die Symbole nicht einfach im Roboter: Sie verkohlen, zerfallen mit glühendem Rand zu Asche, und der Roboter saugt die Asche auf. Das ist reine Show: Deinen Dateien passiert dadurch nichts, und ein angekokeltes Symbol sieht wieder ganz normal aus, sobald es zurück an seinem Platz ist.
 
+## Einstellungen
+
+Hinter dem Knopf „Einstellungen“ findest du:
+
+- **Station steht auf**: auf welchem Monitor der Roboter startet und entleert.
+- **Spaßmodus**: Feuer, Blasen, Konfetti, Disco, Laser (zerlegt alles in Pixel), Tornado, Schnee (der Schneepflug schiebt erst alles zu einem Haufen), Rennen (zwei Rivalen saugen um die Wette) oder alles auf einmal. Dazu **Fernsteuerung**: Mit den Pfeiltasten fährst du selbst, solange RoboDust im Vordergrund ist.
+- **Katze**: Eine von sechs Katzen kommt vorbei. Sie beaufsichtigt, schläft auf dem Roboter, fährt mit, kämpft, schubst Dateien weg oder versteckt sich unter deinen Fenstern. Du kannst sie hochheben.
+- **Aussehen**: Weiß, Schwarz, Gold, Retro oder Pink, mit oder ohne Partyhut.
+- **Regeln**: nur aufräumen, was seit 1, 7 oder 30 Tagen unverändert ist. Mit Rechtsklick in „Elemente prüfen“ merkst du dir eine Datei als „nie anfassen“.
+- **Zeitplan**: täglich oder freitags zur gewählten Uhrzeit, über die Windows-Aufgabenplanung. Danach kommt eine Benachrichtigung; ein Klick darauf führt zum Rückgängig-Knopf.
+- **Start**: mit Windows starten (im Infobereich) und Strg+Alt+R für einen sofortigen Durchgang.
+
+Auf der Startseite steht, was RoboDust bisher geschafft hat, und „Ablage“ zeigt, was dort liegt, mit Größe und Alter. Gelöscht wird dort nichts: Das machst du selbst im Explorer.
+
 ## Mehrere Bildschirme
 
 Ein Roboter fährt über alle Bildschirme. RoboDust legt die Monitore so nebeneinander, wie sie bei dir stehen, und behandelt jeden als Raum einer Wohnung. Wo sich zwei Bildschirme berühren, ist eine Tür, durch die der Roboter hinüberfährt. Die Station steht auf dem Hauptbildschirm, oder auf dem Monitor, den du unter „Station steht auf“ auswählst. Dort startet der Roboter, und dorthin fährt er zum Entleeren. Monitore mit unterschiedlicher Skalierung sind kein Problem, und Win+D bringt RoboDust nicht aus dem Tritt.
 
 ## Was (noch) fehlt
 
-Die Katze aus der Mac-Version und die automatischen Updates gibt es auf Windows noch nicht.
+Die automatischen Updates gibt es auf Windows noch nicht.

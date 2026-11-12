@@ -100,6 +100,7 @@ public sealed class AppController
     }
 
     public bool StartInTray, Scheduled;
+    public CatActor.Mood? ForcedCat;   // dev only: always the same character
 
     public void ShowPanel() { Panel.Show(); Panel.Activate(); }
 
@@ -239,6 +240,14 @@ public sealed class AppController
             s.Fun = m.Fun;
             s.Skin = (RobotSkin)m.Settings.Skin;
             s.RemoteControl = m.Settings.RemoteControl;
+            // The cat: one of six characters, if the user has said they have one.
+            if (m.Settings.HasCat)
+            {
+                s.Cat = ForcedCat is { } fm ? CatActor.PickMood(fm) : CatActor.Random();
+                s.Cat.Audio = synth.Cat;
+                var scr = screens;
+                s.Cat.Windows = () => DesktopWindows.WorldRects(scr);
+            }
             s.SkipFinalClick = false;   // handled here, so that it goes through the real file action
             s.RealRun = real;
             foreach (var it in s.Items)
@@ -598,7 +607,7 @@ public sealed class AppController
     {
         uiTimer?.Stop(); uiTimer = null;
         CompositionTarget.Rendering -= OnFrame;
-        synth.SetMotor(0, 0); synth.SetRoar(0);
+        synth.SetMotor(0, 0); synth.SetRoar(0); synth.Cat.SetPurr(0);
         synth.StopLive();
 
         foreach (var o in overlays) { o.Sim = null; o.Hide(); o.Dispose(); }
@@ -678,6 +687,31 @@ public static class DesktopWindows
         return minimized;
     }
 
+
+    /// The user's windows as rectangles in the shared world, for the cat that hides under them.
+    public static List<RectF> WorldRects(List<Screen> screens)
+    {
+        var list = new List<RectF>();
+        var me = (uint)Environment.ProcessId;
+        Native.EnumWindows((h, _) =>
+        {
+            if (!Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
+            Native.GetWindowThreadProcessId(h, out var pid);
+            if (pid == me) return true;
+            if (Native.DwmGetWindowAttribute(h, Native.DWMWA_CLOAKED, out var cloaked, 4) == 0 && cloaked != 0) return true;
+            var cls = Native.ClassOf(h);
+            if (cls is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return true;
+            if (!Native.GetWindowRect(h, out var r)) return true;
+            var a = Screen.Under(screens, r.Left + 8, r.Top + 8);
+            if (a == null) return true;
+            var tl = a.ToWorld(Math.Max(r.Left, a.WorkArea.Left), Math.Max(r.Top, a.WorkArea.Top));
+            var br = a.ToWorld(Math.Min(r.Right, a.WorkArea.Right), Math.Min(r.Bottom, a.WorkArea.Bottom));
+            var rect = new RectF(tl.X, tl.Y, br.X - tl.X, br.Y - tl.Y);
+            if (rect.W >= 260 && rect.H >= 180) list.Add(rect);
+            return true;
+        }, IntPtr.Zero);
+        return list;
+    }
     public static void Restore(List<IntPtr> minimized)
     {
         // Bottom first, so the window that was in front ends up in front again.

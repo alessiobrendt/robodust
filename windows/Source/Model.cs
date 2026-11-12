@@ -57,6 +57,7 @@ public sealed class Settings
     public int ScheduleHour { get; set; } = 17;
     public bool Autostart { get; set; }
     public bool Hotkey { get; set; }
+    public bool HasCat { get; set; }
     public Stats Stats { get; set; } = new();
 
     public static bool Persists = true;

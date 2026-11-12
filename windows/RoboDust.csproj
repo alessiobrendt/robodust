@@ -23,4 +23,12 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The meows are Elix, recorded by Joseph Sardin for BigSoundBank (CC0). -->
+    <EmbeddedResource Include="../Resources/Sounds/meow-1.wav" LogicalName="RoboDust.Sounds.meow-1.wav" />
+    <EmbeddedResource Include="../Resources/Sounds/meow-2.wav" LogicalName="RoboDust.Sounds.meow-2.wav" />
+    <EmbeddedResource Include="../Resources/Sounds/meow-3.wav" LogicalName="RoboDust.Sounds.meow-3.wav" />
+    <EmbeddedResource Include="../Resources/Sounds/meow-4.wav" LogicalName="RoboDust.Sounds.meow-4.wav" />
+  </ItemGroup>
+
 </Project>

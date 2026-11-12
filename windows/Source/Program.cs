@@ -57,7 +57,7 @@ public static class Program
             var mode = int.TryParse(Value("--mode"), out var mm) ? (CleanMode)mm : CleanMode.Move;
             var scale = float.TryParse(Value("--pixel-scale"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ps) ? ps : 1;
             var follow = int.TryParse(Value("--follow"), out var f) ? f : 0;
-            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow, Has("--all-screens"), int.TryParse(Value("--dock-screen"), out var ds) ? ds : -1, int.TryParse(Value("--fun"), out var fn) ? (FunMode)fn : FunMode.Off, int.TryParse(Value("--skin"), out var sk) ? (RobotSkin)sk : RobotSkin.White, Has("--hat")); }
+            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow, Has("--all-screens"), int.TryParse(Value("--dock-screen"), out var ds) ? ds : -1, int.TryParse(Value("--fun"), out var fn) ? (FunMode)fn : FunMode.Off, int.TryParse(Value("--skin"), out var sk) ? (RobotSkin)sk : RobotSkin.White, Has("--hat"), int.TryParse(Value("--cat"), out var dc) ? dc : -1); }
             catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
             return 0;
         }
@@ -118,6 +118,8 @@ public static class Program
         if (double.TryParse(Value("--auto-stop"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var stopAfter)) controller.AutoStop = stopAfter;
         if (Has("--real")) controller.Model.Source = Source.Real;
         if (Has("--no-save")) Settings.Persists = false;
+        // Dev only: always the same cat. 0 Supervisor, 1 Loaf, 2 Rider, 3 Swatter, 4 Saboteur, 5 Coward.
+        if (int.TryParse(Value("--cat"), out var cm)) { controller.ForcedCat = (CatActor.Mood)cm; controller.Model.Settings.HasCat = true; }
         if (Value("--test-root") is { } root)
         {
             // Dev only: a throwaway folder stands in for the desktop, and settings and history aren't saved.

@@ -26,6 +26,7 @@ public sealed unsafe class Renderer
     public readonly V2 SizePts;
     readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade;
     public RobotSkin Skin;
+    readonly CatRenderer catR;
     public bool Hat;
     readonly uint emptyVao, spriteVao, partVao, gridBuf, instBuf, partBuf;
     readonly int gridCount;
@@ -107,6 +108,7 @@ public sealed unsafe class Renderer
         Gl.Clear(Gl.COLOR_BUFFER_BIT);
         Gl.BindFramebuffer(Gl.FRAMEBUFFER, 0);
         logoTex = MakeLogo();
+        catR = new CatRenderer();
     }
 
     static uint Texture2D(int w, int h, byte[] bgra, uint format, bool mip)
@@ -292,7 +294,9 @@ public sealed unsafe class Renderer
 
         DrawDock(sim);
         DrawParticles(sim);
+        catR.Draw(sim, sim.Cat, SizePts, Origin, false);
         DrawRobot(sim);
+        catR.Draw(sim, sim.Cat, SizePts, Origin, true);
         DrawSprites(late, iconTex, false);
     }
 

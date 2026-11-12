@@ -204,6 +204,7 @@ public sealed partial class Sim
     public void Step(float dt)
     {
         T += dt;
+        Cat?.Update(this, dt);
         if (Paused)
         {
             BrushSpeed *= MathF.Exp(-dt * 6); V = 0; W = 0;
@@ -241,7 +242,7 @@ public sealed partial class Sim
         BrushSpeed += ((suck ? 26 : 0) * (1 - Heavy * 0.7f) - BrushSpeed) * MathF.Min(1, dt * 3);
         LidarSpeed += ((Phase is Phase.Dropping or Phase.Done or Phase.Tidied ? 0 : 16) - LidarSpeed) * MathF.Min(1, dt * 2);
         float level = suck ? 1 : (Phase is Phase.Undocking or Phase.Scanning or Phase.Returning or Phase.Docking ? 0.3f : 0);
-        Audio?.SetMotor(Picked ? level * 0.6f : level, Heavy);
+        Audio?.SetMotor(Picked ? level * 0.6f : level, MathF.Max(Heavy, Cat?.LoadOnRobot ?? 0));
         Battery = M.Clamp(Battery - (suck ? 0.0016f : 0) * dt, 0, 1);
         if (Phase is Phase.Emptying or Phase.Done) Battery = MathF.Min(1, Battery + dt * 0.01f);
     }
@@ -288,7 +289,7 @@ public sealed partial class Sim
                     if (a <= ScanSweep && a > prev - 0.001f) { it.Seen = true; it.Ping = 1; tickBudget += 0.3f; }
                 }
                 if (tickBudget > 1) { tickBudget = 0; Audio?.Tick(); }
-                if (ScanSweep > 2 * M.Pi)
+                if (ScanSweep > 2 * M.Pi && Cat?.HoldsRobot(this) != true)
                 {
                     foreach (var it in Items) if (!it.Seen) { it.Seen = true; it.Ping = 1; }
                     Audio?.Chirp((880, 0.08f), (1319, 0.14f));
@@ -298,7 +299,7 @@ public sealed partial class Sim
             }
             case Phase.Cleaning:
                 ScanActive = MathF.Max(0, ScanActive - dt * 2);
-                Status = Heavy > 0.35f ? "Große Datei. Puh…" : "Saugt";
+                Status = Cat?.Note(this) ?? (Heavy > 0.35f ? "Große Datei. Puh…" : "Saugt");
                 FollowPath(dt);
                 if (BinCount >= BinCapacity && Remaining > 0) { GoDock(true); break; }
                 if (PathI >= path.Count)
@@ -307,7 +308,7 @@ public sealed partial class Sim
                 }
                 break;
             case Phase.Hunting:
-                Status = "Sammelt die Nachzügler ein";
+                Status = Cat?.Note(this) ?? "Sammelt die Nachzügler ein";
                 if (BinCount >= BinCapacity && Remaining > 0) { GoDock(true); break; }
                 if (huntTarget == null || huntTarget.Icon.Gone || huntTarget.Icon.Ingesting)
                 {
@@ -555,6 +556,7 @@ public sealed partial class Sim
     {
         if (ManualActive) { DriveManual(dt); return; }
         if (PathI >= path.Count) { DriveRaw(0, 0, dt); return; }
+        if (Cat?.Fighting == true) { DriveRaw(0, 0, dt); return; }
         // Mouse in the way: bump, back off, swing round, like a real one meeting a foot.
         if (maneuver is { } m)
         {
@@ -575,10 +577,17 @@ public sealed partial class Sim
                 return;
             }
         }
+        if (Cat is { } c && T - LastBump > 1.2f && c.RobotContact(this))
+        {
+            LastBump = T;
+            Bumper = 1; Audio?.Thud(0.3f); Audio?.Chirp((494, 0.07f), (392, 0.09f));
+            maneuver = (0.34f, 0.5f, (c.Pos - Pos).Dot(Side) > 0 ? -1 : 1);
+            return;
+        }
         var target = path[PathI];
         waypointT += dt;
         var reach = (PathI == path.Count - 1 ? R * 0.28f : R * 0.45f) * MathF.Max(1, SpeedScale);
-        if ((target - Pos).Len < reach || waypointT > 14)
+        if ((target - Pos).Len < reach || waypointT > 14 || Cat?.Covers(target, this) == true)
         {
             PathI += 1; waypointT = 0;
             if (PathI >= path.Count) return;
@@ -592,6 +601,7 @@ public sealed partial class Sim
             var k = 1 - toT.Len / (R * 1.4f);
             aim = target + (path[PathI + 1] - target).Unit * (R * 0.9f * k);
         }
+        if (Cat != null) aim = Cat.Steer(aim, this);
         var err = M.Wrap(MathF.Atan2(aim.Y - Pos.Y, aim.X - Pos.X) - Heading);
         var wCmd = M.Clamp(err * 4.2f * SpeedScale, -3.1f * SpeedScale, 3.1f * SpeedScale);
         var align = M.Clamp(1 - MathF.Abs(err) / 1.15f, 0, 1);

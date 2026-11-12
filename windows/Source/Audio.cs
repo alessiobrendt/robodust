@@ -14,6 +14,7 @@ public sealed unsafe class Synth : ISimAudio
     readonly List<Voice> pending = new();
     volatile float motorTarget, loadTarget, roarTarget;
     public volatile bool Muted;
+    public readonly CatSounds Cat = new();
     const float Master = 0.55f;
 
     // Audio-thread state.
@@ -138,6 +139,7 @@ public sealed unsafe class Synth : ISimAudio
             var roarS = lpC * 2.6f * roar + MathF.Sin(phase * twoPi * 0.5f) * 0.25f * roar;
 
             var s = (hum * 0.14f + air * 0.42f) * m + roarS * 0.62f;
+            s += Cat.Sample(n);   // purring, hissing and meowing
 
             int j = 0;
             while (j < voices.Count)

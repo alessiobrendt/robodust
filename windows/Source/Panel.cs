@@ -451,6 +451,9 @@ public sealed class Panel : Window
                 (FunMode.Confetti, "🎉 Konfetti"), (FunMode.Disco, "🕺 Disco"), (FunMode.Laser, "⚡ Laser"),
                 (FunMode.Tornado, "🌪 Tornado"), (FunMode.Plow, "❄ Schnee"), (FunMode.Race, "🏁 Rennen"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }, 3),
             funText, remote));
+        var catText = Text("Eine von sechs Katzen kommt zu Besuch: Sie beaufsichtigt, schläft auf dem Roboter, fährt mit, kämpft, schubst Dateien weg oder versteckt sich. Du kannst sie hochheben.");
+        catText.Margin = new Thickness(0, 2, 0, 0);
+        body.Children.Add(Field("Katze", Switch("Ich habe eine Katze", s.HasCat, v => m.Set(() => s.HasCat = v)), catText));
         var hat = Switch("Mit Partyhut", s.Hat, v => m.Set(() => s.Hat = v));
         ((FrameworkElement)hat).Margin = new Thickness(0, 10, 0, 0);
         body.Children.Add(Field("Aussehen",

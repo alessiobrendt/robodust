@@ -143,6 +143,7 @@ public sealed class Overlay : Form
     {
         if (Sim == null || e.Button != MouseButtons.Left) return;
         var p = Pointer();
+        if (Sim.Cat is { } c && c.Hit(p, Sim)) { c.Pick(Sim); Capture = true; return; }
         if (Sim.HitRobot(p)) { Sim.PickUp(); Capture = true; return; }
         var it = Sim.HitItem(p);
         if (it != null && !it.Icon.Ingesting) { grabbedItem = it; it.Grabbed = true; lastDragW = p; dragVelW = V2.Zero; Capture = true; }
@@ -152,6 +153,7 @@ public sealed class Overlay : Form
     {
         if (Sim == null) return;
         var p = Pointer();
+        if (Sim.Cat is { Picked: true } cat) { cat.Drag(p, Sim); return; }
         if (Sim.Picked) { Sim.DragRobot(p); return; }
         if (grabbedItem != null)
         {
@@ -165,6 +167,7 @@ public sealed class Overlay : Form
     {
         if (Sim == null) return;
         Capture = false;
+        Sim.Cat?.Drop(Sim);
         if (Sim.Picked) Sim.DropRobot();
         if (grabbedItem != null) { grabbedItem.Grabbed = false; grabbedItem.Icon.Vel = dragVelW; grabbedItem.Icon.AngV = dragVelW.X * 0.006f; grabbedItem = null; }
     }
