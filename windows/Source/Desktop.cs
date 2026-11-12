@@ -157,18 +157,63 @@ public sealed class DesktopView
         }
     }
 
-    /// Moves icons, never files. Returns how many Explorer accepted.
+    public IShellView Shell;
+
+    /// Moves icons, never files. Returns how many really sit where they should afterwards.
+    /// Explorer only keeps a layout it has written down: without that, the next refresh of the
+    /// desktop (F5, a file appearing, a restart) puts every icon back where it was before.
     public int SetPositions(List<(string path, POINT pos)> moves)
     {
         var want = new Dictionary<string, POINT>(StringComparer.OrdinalIgnoreCase);
         foreach (var (p, pos) in moves) want[Path.GetFullPath(p).TrimEnd('\\')] = pos;
+        // A few rounds: an icon that landed beside its spot (something else was still in the way) gets another go.
+        for (int round = 0; round < 3; round++)
+        {
+            int wrong = 0;
+            ForEachItem((path, pidl) =>
+            {
+                if (!want.TryGetValue(path, out var pos)) return;
+                if (View.GetItemPosition(pidl, out var now) == 0 && Near(now, pos)) return;
+                View.SelectAndPositionItems(1, new[] { pidl }, new[] { pos }, Native.SVSI_POSITIONITEM);
+                wrong++;
+            });
+            if (wrong == 0) break;
+        }
         int done = 0;
         ForEachItem((path, pidl) =>
         {
-            if (!want.TryGetValue(path, out var pos)) return;
-            if (View.SelectAndPositionItems(1, new[] { pidl }, new[] { pos }, Native.SVSI_POSITIONITEM) == 0) done++;
+            if (want.TryGetValue(path, out var pos) && View.GetItemPosition(pidl, out var now) == 0 && Near(now, pos)) done++;
         });
+        Save();
         return done;
+    }
+
+    static bool Near(POINT a, POINT b) => Math.Abs(a.X - b.X) <= 2 && Math.Abs(a.Y - b.Y) <= 2;
+
+    /// Has Explorer write the current icon layout down.
+    public void Save() { try { Shell?.SaveViewState(); } catch { } }
+
+    /// Where Explorer has every item right now. Read-only.
+    public List<POINT> AllPositions()
+    {
+        var list = new List<POINT>();
+        if (View.ItemCount(Native.SVGIO_ALLVIEW, out var count) != 0) return list;
+        for (int i = 0; i < count; i++)
+        {
+            if (View.Item(i, out var pidl) != 0 || pidl == IntPtr.Zero) continue;
+            try { if (View.GetItemPosition(pidl, out var pt) == 0) list.Add(pt); }
+            finally { Native.ILFree(pidl); }
+        }
+        return list;
+    }
+
+    /// Where Explorer has one item right now, if it shows it.
+    public POINT? PositionOf(string path)
+    {
+        var full = Path.GetFullPath(path).TrimEnd('\\');
+        POINT? found = null;
+        ForEachItem((p, pidl) => { if (found == null && string.Equals(p, full, StringComparison.OrdinalIgnoreCase) && View.GetItemPosition(pidl, out var pt) == 0) found = pt; });
+        return found;
     }
 }
 
@@ -189,7 +234,7 @@ public static class DesktopReader
         var browser = (IShellBrowser)browserObj;
         if (browser.QueryActiveShellView(out var viewObj) != 0 || viewObj is not IFolderView fv)
             throw new DesktopException("Der Desktop von Explorer antwortet nicht.");
-        var v = new DesktopView { View = fv };
+        var v = new DesktopView { View = fv, Shell = viewObj as IShellView };
         ((IShellView)viewObj).GetWindow(out var defView);
         v.ListView = Native.FindWindowEx(defView, IntPtr.Zero, "SysListView32", null);
         if (v.ListView == IntPtr.Zero) v.ListView = defView;
@@ -200,7 +245,7 @@ public static class DesktopReader
         {
             // Explorer reports the size before display scaling: 48 is "Mittelgroße Symbole".
             if (f2.GetViewModeAndIconSize(out _, out var size) == 0 && size > 0 && size <= 256) v.IconPt = size;
-            if (f2.GetCurrentFolderFlags(out var flags) == 0) { v.SnapsToGrid = (flags & 0x00080000) != 0; v.AutoArrange |= (flags & 0x1) != 0; }
+            if (f2.GetCurrentFolderFlags(out var flags) == 0) { v.SnapsToGrid = (flags & 0x4) != 0; v.AutoArrange |= (flags & 0x1) != 0; }   // FWF_SNAPTOGRID, FWF_AUTOARRANGE
         }
         return v;
     }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -29,7 +29,7 @@ public sealed partial class Sim
     public readonly List<Coin> Coins = new();
     public int CoinsPicked;
     bool coinsDropped;
-    float exhaustAcc, trailAcc;
+    float exhaustAcc;
 
     /// What it plays when it bumps into something: a beep, or a horn from the shop.
     void Honk()

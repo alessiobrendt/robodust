@@ -88,6 +88,44 @@ public static class Program
             try { Offline.AlignTest(shot, int.TryParse(Value("--screen"), out var si) ? si : 0); } catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
             return 0;
         }
+        if (Has("--save-view-test"))
+        {
+            // Nudges one icon by a few pixels, has Explorer save and refresh the desktop, checks the icon
+            // stayed put, then puts it back exactly. Moves no file and prints no names.
+            Console_();
+            try
+            {
+                var v = DesktopReader.OpenView();
+                var path = System.IO.Directory.EnumerateFileSystemEntries(DesktopReader.DesktopFolder).FirstOrDefault(p => v.PositionOf(p) != null);
+                if (path == null) { Console.WriteLine("no icon"); return 1; }
+                var p0 = v.PositionOf(path).Value;
+                // A free cell next to it, on the same display.
+                var o = v.Origin;
+                var scr = Screen.All().First(s => s.Bounds.Contains(o.X + p0.X + 2, o.Y + p0.Y + 2));
+                float k = scr.Scale / Native.PrimaryScale();
+                int sx = (int)MathF.Round(v.Spacing.X * k), sy = (int)MathF.Round(v.Spacing.Y * k);
+                var all = v.AllPositions();
+                var moved = new[] { (0, 1), (0, -1), (1, 0), (-1, 0), (0, 2), (2, 0), (-2, 0), (0, -2), (1, 1), (-1, 1), (1, -1), (-1, -1) }
+                    .Select(d => new POINT(p0.X + d.Item1 * sx, p0.Y + d.Item2 * sy))
+                    .FirstOrDefault(c => scr.WorkArea.Contains(o.X + c.X + sx / 2, o.Y + c.Y + sy / 2) && scr.WorkArea.Contains(o.X + c.X, o.Y + c.Y) && !all.Any(a => Math.Abs(a.X - c.X) < sx / 2 && Math.Abs(a.Y - c.Y) < sy / 2));
+                if (moved.X == 0 && moved.Y == 0) { Console.WriteLine("no free cell"); return 1; }
+                Console.WriteLine($"moving by {moved.X - p0.X},{moved.Y - p0.Y}");
+                static string Layout() { using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\Shell\Bags\1\Desktop"); return k?.GetValue("IconLayouts") is byte[] b ? $"{b.Length}b {Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(b))[..8]}" : "none"; }
+                Console.WriteLine("layout before " + Layout());
+                Console.WriteLine($"set {v.SetPositions(new() { (path, moved) })}");
+                Console.WriteLine($"save hr 0x{v.Shell?.SaveViewState() ?? -1:X8}, before refresh {(DesktopReader.OpenView().PositionOf(path) is { } b ? $"{b.X - p0.X},{b.Y - p0.Y}" : "gone")}");
+                Console.WriteLine("layout after save " + Layout());
+                System.Threading.Thread.Sleep(2500);
+                Console.WriteLine($"after wait {(DesktopReader.OpenView().PositionOf(path) is { } w ? $"{w.X - p0.X},{w.Y - p0.Y}" : "gone")}, layout " + Layout());
+                Native.SHChangeNotify(Native.SHCNE_UPDATEDIR, Native.SHCNF_PATHW | Native.SHCNF_FLUSH, DesktopReader.DesktopFolder, IntPtr.Zero);
+                System.Threading.Thread.Sleep(2500);
+                var after = DesktopReader.OpenView().PositionOf(path);
+                Console.WriteLine($"after refresh: {(after is { } a ? (a.X == moved.X && a.Y == moved.Y ? "kept" : $"moved by {a.X - p0.X},{a.Y - p0.Y}") : "gone")}");
+                Console.WriteLine($"back {DesktopReader.OpenView().SetPositions(new() { (path, p0) })}");
+            }
+            catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
+            return 0;
+        }
         if (Has("--read-test"))
         {
             // Exercises the real-desktop path, printing only counts and geometry: no names, no pixels.
@@ -110,6 +148,15 @@ public static class Program
                 view.View.ItemCount(Native.SVGIO_ALLVIEW, out var all);
                 Console.WriteLine($"explorer items {all}, raw x {e.Min(x => x.ViewPos?.X)}..{e.Max(x => x.ViewPos?.X)} y {e.Min(x => x.ViewPos?.Y)}..{e.Max(x => x.ViewPos?.Y)}");
                 foreach (var s in System.Windows.Forms.Screen.AllScreens) Console.WriteLine($"monitor {s.Bounds} primary {s.Primary}");
+                var org = view.Origin;
+                for (int i = 0; i < screens.Count; i++)
+                {
+                    var wa = screens[i].WorkArea;
+                    var ps = lists[i].Where(x => x.ViewPos != null).Select(x => (x: x.ViewPos.Value.X + org.X - wa.Left, y: x.ViewPos.Value.Y + org.Y - wa.Top)).ToList();
+                    Console.WriteLine($"grid {i}: x mod " + string.Join(" ", ps.GroupBy(p => ((p.x % view.Spacing.X) + view.Spacing.X) % view.Spacing.X).OrderByDescending(g => g.Count()).Take(4).Select(g => $"{g.Key}x{g.Count()}"))
+                        + " | y mod " + string.Join(" ", ps.GroupBy(p => ((p.y % view.Spacing.Y) + view.Spacing.Y) % view.Spacing.Y).OrderByDescending(g => g.Count()).Take(4).Select(g => $"{g.Key}x{g.Count()}"))
+                        + " | min " + (ps.Count > 0 ? $"{ps.Min(p => p.x)},{ps.Min(p => p.y)}" : "-"));
+                }
                 Native.GetWindowRect(view.ListView, out var lr);
                 Console.WriteLine($"listview class {Native.ClassOf(view.ListView)} rect {lr.Left},{lr.Top} {lr.Width}x{lr.Height}");
                 sw.Restart();

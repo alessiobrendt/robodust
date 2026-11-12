@@ -962,6 +962,16 @@ public sealed partial class Sim
     {
         SetPhase(Phase.Tidying);
         var grouped = Enum.GetValues<Kind>().SelectMany(k => Items.Where(i => i.Entry.Kind == k && !i.Protected)).ToList();
+        if (Grid is { } grid)
+        {
+            // The real desktop: one icon per Explorer cell, column by column, the dock's display first,
+            // then the next nearest. Anything that doesn't fit anywhere goes back where it was.
+            var spots = GridSpots(grid, grouped.Count);
+            var list = grouped.Select((it, i) => (it, i < spots.Count ? spots[i] : it.Home)).ToList();
+            Launch(list, _ => BagPos, Flight.ToTidy, 3.0f);
+            Audio?.SetRoar(0);
+            return;
+        }
         var protectedSpots = Items.Where(i => i.Protected).Select(i => i.Home).ToList();
         var rowPitch = MathF.Max(Metrics.IconHalf * 2 + Metrics.LabelHalf.Y * 2 + 14, 90);
         var colPitchWanted = MathF.Max(Metrics.LabelHalf.X * 2 + 12, 90);
@@ -986,6 +996,32 @@ public sealed partial class Sim
         }
         Launch(slots, _ => BagPos, Flight.ToTidy, 3.0f);
         Audio?.SetRoar(0);
+    }
+
+    /// Explorer's icon grid in points, on the real desktop. Its cells start at each display's top-left.
+    public V2? Grid;
+
+    List<V2> GridSpots(V2 g, int need)
+    {
+        var spots = new List<V2>();
+        var main = Plan.Rooms[Plan.Main];
+        var taken = Items.Where(i => i.Protected).Select(i => i.Home).ToList();
+        var order = Enumerable.Range(0, Plan.Rooms.Count).OrderBy(i => i == Plan.Main ? 0 : 1).ThenBy(i => (Plan.Rooms[i].Center - main.Center).Len);
+        foreach (var ri in order)
+        {
+            var room = Plan.Rooms[ri];
+            int cols = (int)(room.W / g.X), rows = (int)(room.H / g.Y);
+            for (int c = 0; c < cols; c++)
+                for (int r = 0; r < rows; r++)
+                {
+                    // Same centre Explorer gives an icon in that cell: half a cell in, icon and a hair down.
+                    var spot = new V2(room.X + g.X * (c + 0.5f), room.Y + Metrics.IconHalf + 2.8f + r * g.Y);
+                    if (taken.Any(p => MathF.Abs(p.X - spot.X) < g.X / 2 && MathF.Abs(p.Y - spot.Y) < g.Y / 2)) continue;
+                    spots.Add(spot);
+                    if (spots.Count == need) return spots;
+                }
+        }
+        return spots;
     }
 
     public string DoneStatus

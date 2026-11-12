@@ -36,6 +36,8 @@ public static unsafe class Offline
         r.SetSprites(sprites);
         var s = new Sim(plan, entries) { Mode = mode, SkipFinalClick = true, Fun = fun, Skin = skin };
         if (cat >= 0) s.Cat = CatActor.PickMood((CatActor.Mood)cat);
+        // Ordnen as on a real desktop: Explorer's default grid for medium icons.
+        if (mode == CleanMode.Tidy) s.Grid = new V2(118, 100);
         // --look "skin=7,hat=2,spoiler,glow,exhaust,decal=2,pet=1"
         var lk = new Look { Skin = skin, Hat = hat ? 1 : 0 };
         foreach (var part in (look ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))

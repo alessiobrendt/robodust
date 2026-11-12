@@ -259,6 +259,8 @@ public sealed class AppController
             }
             s.SkipFinalClick = false;   // handled here, so that it goes through the real file action
             s.RealRun = real;
+            // Ordnen fills Explorer's own cells, so that every icon lands exactly where its copy did.
+            if (view != null && real) s.Grid = new V2(view.Spacing.X, view.Spacing.Y) / Native.PrimaryScale();
             foreach (var it in s.Items)
             {
                 var e = it.Entry;

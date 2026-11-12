@@ -54,6 +54,11 @@ public interface IShellBrowser
 public interface IShellView
 {
     [PreserveSig] int GetWindow(out IntPtr phwnd);
+    // IOleWindow and IShellView, in vtable order, up to the one RoboDust needs.
+    void _ContextSensitiveHelp(); void _TranslateAccelerator(); void _EnableModeless(); void _UIActivate();
+    void _Refresh(); void _CreateViewWindow(); void _DestroyViewWindow(); void _GetCurrentInfo(); void _AddPropertySheetPages();
+    /// Writes the icon layout to the registry, so it survives a refresh, a sign-out and a restart.
+    [PreserveSig] int SaveViewState();
 }
 
 [ComImport, Guid("CDE725B0-CCC9-4519-917E-325D72FAB4CE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -72,7 +77,8 @@ public interface IFolderView
     [PreserveSig] int GetDefaultSpacing(out POINT pt);
     [PreserveSig] int GetAutoArrange();
     [PreserveSig] int SelectItem(int item, uint flags);
-    [PreserveSig] int SelectAndPositionItems(uint cidl, [In] IntPtr[] apidl, [In] POINT[] apt, uint flags);
+    // Plain C arrays: on a COM interface .NET would otherwise send a SAFEARRAY, which Explorer refuses.
+    [PreserveSig] int SelectAndPositionItems(uint cidl, [In, MarshalAs(UnmanagedType.LPArray)] IntPtr[] apidl, [In, MarshalAs(UnmanagedType.LPArray)] POINT[] apt, uint flags);
 }
 
 [ComImport, Guid("1AF3A467-214F-4298-908E-06B03E0B39F9"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
