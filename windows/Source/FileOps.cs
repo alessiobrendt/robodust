@@ -320,6 +320,35 @@ public static class FileOps
         return (back, left);
     }
 
+    // MARK: - The shelf, read-only
+
+    public sealed class ShelfRun { public string Name, Path; public DateTime When; public int Count; public long Bytes; }
+
+    /// What's in the shelf: one entry per run folder, newest first. Reads only.
+    public static List<ShelfRun> ShelfContents(string shelf)
+    {
+        var list = new List<ShelfRun>();
+        try
+        {
+            if (!Directory.Exists(shelf)) return list;
+            foreach (var d in new DirectoryInfo(shelf).EnumerateDirectories())
+            {
+                var r = new ShelfRun { Name = d.Name, Path = d.FullName, When = d.CreationTime };
+                try
+                {
+                    r.Count = d.EnumerateFileSystemInfos().Count(x => x.Name != "_RoboDust-Info.txt");
+                    var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+                    int seen = 0;
+                    foreach (var f in d.EnumerateFiles("*", opts)) { r.Bytes += f.Length; if (++seen > 20000) break; }
+                }
+                catch { }
+                list.Add(r);
+            }
+        }
+        catch { }
+        return list.OrderByDescending(r => r.When).ToList();
+    }
+
     // MARK: - Records
 
     static string RunsDir { get { var d = Path.Combine(DataDir, "runs"); Directory.CreateDirectory(d); return d; } }

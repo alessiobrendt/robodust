@@ -87,7 +87,7 @@ public sealed class Panel : Window
         var m = model;
         return string.Join("|", m.Stage, m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied or Phase.PuttingBack or Phase.Leaving or Phase.Finished ? m.Phase.ToString() : "live",
             m.Paused, m.Note, m.Outcome, m.Mode, m.Source, m.ReviewOpen, m.Result?.Title, m.Result?.Detail, m.Applying, m.Support, m.SkipFinalClick, m.ClearWindows,
-            m.LastRun?.Id, m.DockScreen, m.Fun, m.SortBy, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
+            m.LastRun?.Id, m.DockScreen, m.Fun, m.Page, System.Text.Json.JsonSerializer.Serialize(m.Settings), m.SortBy, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
     }
 
     public void Refresh()
@@ -131,7 +131,17 @@ public sealed class Panel : Window
         root.Children.Add(body);
         switch (model.Stage)
         {
-            case Stage.Ready: Setup(body); break;
+            case Stage.Ready:
+                if (model.Page == Page.Settings)
+                {
+                    // Taller than some screens: it scrolls.
+                    var inner = new StackPanel();
+                    SettingsPage(inner);
+                    body.Children.Add(new ScrollViewer { Content = inner, MaxHeight = Math.Max(300, SystemParameters.WorkArea.Height - 170), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 6, 0) });
+                }
+                else if (model.Page == Page.Shelf) ShelfPage(body);
+                else Setup(body);
+                break;
             case Stage.Preparing: Preparing(body); break;
             case Stage.Running: Running(body); break;
         }
@@ -236,16 +246,17 @@ public sealed class Panel : Window
         return p;
     }
 
-    static UIElement Segmented<T>(IList<(T value, string title)> options, T selected, Action<T> pick)
+    static UIElement Segmented<T>(IList<(T value, string title)> options, T selected, Action<T> pick, int columns = 0)
     {
         var outer = new Border { CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromArgb(22, 255, 255, 255)), Padding = new Thickness(2) };
-        var g = new UniformGrid { Rows = options.Count > 5 ? 2 : 1, Columns = options.Count > 5 ? (options.Count + 1) / 2 : options.Count };
+        var cols = columns > 0 ? columns : options.Count > 5 ? (options.Count + 1) / 2 : options.Count;
+        var g = new UniformGrid { Columns = cols, Rows = (options.Count + cols - 1) / cols };
         foreach (var (value, title) in options)
         {
             var on = EqualityComparer<T>.Default.Equals(value, selected);
             var b = new Button
             {
-                Content = new TextBlock { Text = title, FontSize = options.Count > 3 ? 12 : 13, FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal, Foreground = on ? Brushes.White : Secondary },
+                Content = new TextBlock { Text = title, FontSize = options.Count > 3 && columns == 0 ? 12 : 13, FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal, Foreground = on ? Brushes.White : Secondary },
                 Height = 28, Cursor = Cursors.Hand,
             };
             b.Template = Template(new CornerRadius(6), on ? new SolidColorBrush(Color.FromArgb(56, 255, 255, 255)) : Brushes.Transparent, null,
@@ -365,24 +376,12 @@ public sealed class Panel : Window
             after.Add(sw);
         }
         body.Children.Add(Field("Danach", after.ToArray()));
-        // With several displays: which one the dock stands on, which is where the robot starts and empties.
-        var displays = Screen.All();
-        if (displays.Count > 1)
+        if (m.Fun != FunMode.Off || m.Settings.RemoteControl)
         {
-            Floorplan.Layout(displays);
-            var ordered = displays.OrderBy(d => d.WorldOrigin.X).ThenBy(d => d.WorldOrigin.Y).ToList();
-            var options = ordered.Select((d, i) => (d.Name, d.IsPrimary ? $"{i + 1} · Haupt" : $"Monitor {i + 1}")).ToList();
-            var current = displays.Any(d => d.Name == m.DockScreen) ? m.DockScreen : displays.First(d => d.IsPrimary).Name;
-            var dockText = Text("Dort startet der Roboter, und dorthin fährt er zum Entleeren.");
-            dockText.Margin = new Thickness(0, 7, 0, 0);
-            body.Children.Add(Field("Station steht auf", Segmented(options, current, v => { m.DockScreen = v; m.Changed(); }), dockText));
+            var fun = Text("Spaßmodus: " + FunName(m.Fun) + (m.Settings.RemoteControl ? " · Fernsteuerung mit den Pfeiltasten" : ""), 12, new SolidColorBrush(Amber));
+            fun.Margin = new Thickness(0, 0, 0, 12);
+            body.Children.Add(fun);
         }
-        var funText = Text(FunBlurb);
-        funText.Margin = new Thickness(0, 7, 0, 0);
-        body.Children.Add(Field("Spaßmodus",
-            Segmented(new List<(FunMode, string)> { (FunMode.Off, "Aus"), (FunMode.Flames, "🔥 Feuer"), (FunMode.Bubbles, "🧼 Blasen"), (FunMode.Confetti, "🎉 Konfetti"), (FunMode.Disco, "🕺 Disco"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }),
-            funText));
-        body.Children.Add(Switch("Fenster minimieren, damit ich zuschauen kann", m.ClearWindows, v => { m.ClearWindows = v; m.Changed(); }));
         if (m.Note != null) { var n = Text(m.Note, 12, new SolidColorBrush(Orange)); n.Margin = new Thickness(0, 0, 0, 12); body.Children.Add(n); }
         var start = Btn("Saugen starten", Kind.Primary, () => m.Start());
         start.IsDefault = true;
@@ -398,6 +397,142 @@ public sealed class Panel : Window
         });
         var ft = Text(Footnote); Grid.SetColumn(ft, 1); foot.Children.Add(ft);
         body.Children.Add(foot);
+        // What it has done so far.
+        var st = m.Settings.Stats;
+        if (st.Runs > 0)
+        {
+            var parts = new List<string> { $"{st.Runs} {(st.Runs == 1 ? "Durchgang" : "Durchgänge")}" };
+            if (st.Items > 0) parts.Add($"{st.Items} aufgeräumt ({Fmt.Bytes(st.Bytes)})");
+            parts.Add(st.Meters >= 1000 ? $"{st.Meters / 1000:0.0} km gefahren" : $"{st.Meters:0} m gefahren");
+            if (st.FavouriteKind != null) parts.Add("Lieblingsart: " + st.FavouriteKind);
+            var stats = Text("Bisher: " + string.Join(" · ", parts));
+            stats.Margin = new Thickness(0, 14, 0, 0);
+            body.Children.Add(stats);
+        }
+        var nav = Row(8, Btn("Einstellungen", Kind.Quiet, () => { m.Page = Page.Settings; m.Changed(); }, ""),
+                         Btn("Ablage", Kind.Quiet, () => { m.Page = Page.Shelf; m.Changed(); }, ""));
+        ((FrameworkElement)nav).Margin = new Thickness(0, 14, 0, 0);
+        body.Children.Add(nav);
+    }
+
+    static string FunName(FunMode f) => f switch
+    {
+        FunMode.Flames => "🔥 Feuer", FunMode.Bubbles => "🧼 Blasen", FunMode.Confetti => "🎉 Konfetti", FunMode.Disco => "🕺 Disco",
+        FunMode.Laser => "Laser", FunMode.Tornado => "🌪 Tornado", FunMode.Plow => "❄ Schneepflug", FunMode.Race => "🏁 Wettrennen",
+        FunMode.All => "Alles!", _ => "Aus",
+    };
+
+    // MARK: - Settings page
+
+    void SettingsPage(StackPanel body)
+    {
+        var m = model; var s = m.Settings;
+        body.Children.Add(Btn("Zurück", Kind.Quiet, () => { m.Page = Page.Main; m.Changed(); }, ""));
+        body.Children.Add(new Border { Height = 16 });
+        // With several displays: which one the dock stands on, which is where the robot starts and empties.
+        var displays = Screen.All();
+        if (displays.Count > 1)
+        {
+            Floorplan.Layout(displays);
+            var ordered = displays.OrderBy(d => d.WorldOrigin.X).ThenBy(d => d.WorldOrigin.Y).ToList();
+            var options = ordered.Select((d, i) => (d.Name, d.IsPrimary ? $"{i + 1} · Haupt" : $"Monitor {i + 1}")).ToList();
+            var current = displays.Any(d => d.Name == m.DockScreen) ? m.DockScreen : displays.First(d => d.IsPrimary).Name;
+            var dockText = Text("Dort startet der Roboter, und dorthin fährt er zum Entleeren.");
+            dockText.Margin = new Thickness(0, 7, 0, 0);
+            body.Children.Add(Field("Station steht auf", Segmented(options, current, v => { m.DockScreen = v; m.Changed(); }), dockText));
+        }
+        var funText = Text(FunBlurb);
+        funText.Margin = new Thickness(0, 7, 0, 0);
+        var remote = Switch("Fernsteuerung: mit den Pfeiltasten selbst fahren", s.RemoteControl, v => m.Set(() => s.RemoteControl = v));
+        ((FrameworkElement)remote).Margin = new Thickness(0, 10, 0, 0);
+        body.Children.Add(Field("Spaßmodus",
+            Segmented(new List<(FunMode, string)> {
+                (FunMode.Off, "Aus"), (FunMode.Flames, "🔥 Feuer"), (FunMode.Bubbles, "🧼 Blasen"),
+                (FunMode.Confetti, "🎉 Konfetti"), (FunMode.Disco, "🕺 Disco"), (FunMode.Laser, "⚡ Laser"),
+                (FunMode.Tornado, "🌪 Tornado"), (FunMode.Plow, "❄ Schnee"), (FunMode.Race, "🏁 Rennen"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }, 3),
+            funText, remote));
+        var hat = Switch("Mit Partyhut", s.Hat, v => m.Set(() => s.Hat = v));
+        ((FrameworkElement)hat).Margin = new Thickness(0, 10, 0, 0);
+        body.Children.Add(Field("Aussehen",
+            Segmented(new List<(RobotSkin, string)> { (RobotSkin.White, "Weiß"), (RobotSkin.Black, "Schwarz"), (RobotSkin.Gold, "Gold"), (RobotSkin.Retro, "Retro"), (RobotSkin.Pink, "Pink") }, (RobotSkin)s.Skin, v => m.Set(() => s.Skin = (int)v)),
+            hat));
+        var ruleText = Text(s.NeverTouch.Count == 0
+            ? "Rechtsklick auf eine Datei in „Elemente prüfen“ merkt sie dir als „nie anfassen“."
+            : $"{s.NeverTouch.Count} {(s.NeverTouch.Count == 1 ? "Datei rührt" : "Dateien rührt")} RoboDust nie an.");
+        ruleText.Margin = new Thickness(0, 7, 0, 0);
+        var rules = new List<UIElement>
+        {
+            Segmented(new List<(int, string)> { (0, "Alles"), (1, "ab 1 Tag"), (7, "ab 7 Tagen"), (30, "ab 30 Tagen") }, s.MinAgeDays, v => m.Set(() => s.MinAgeDays = v)),
+            ruleText,
+        };
+        if (s.NeverTouch.Count > 0)
+        {
+            var clear = Btn("Liste leeren", Kind.Quiet, () => m.Set(() => s.NeverTouch.Clear()));
+            clear.Margin = new Thickness(0, 8, 0, 0);
+            rules.Add(clear);
+        }
+        body.Children.Add(Field("Nur aufräumen, was so lange unverändert ist", rules.ToArray()));
+        var schedText = Text(s.Schedule == 0
+            ? "RoboDust räumt nur auf, wenn du startest."
+            : $"Räumt {(s.Schedule == 1 ? "jeden Tag" : "jeden Freitag")} um {s.ScheduleHour} Uhr deinen echten Desktop auf, mit der Einstellung von „Danach“{(m.SkipFinalClick ? "" : ", und wartet am Ende auf deinen Klick")}. Danach kommt eine Benachrichtigung.");
+        schedText.Margin = new Thickness(0, 7, 0, 0);
+        var sched = new List<UIElement> { Segmented(new List<(int, string)> { (0, "Aus"), (1, "Täglich"), (2, "Freitags") }, s.Schedule, v => m.SetSchedule(v)) };
+        if (s.Schedule != 0)
+        {
+            var hours = Segmented(new List<(int, string)> { (9, "9 Uhr"), (12, "12 Uhr"), (17, "17 Uhr"), (20, "20 Uhr") }, s.ScheduleHour, v => { s.ScheduleHour = v; m.SetSchedule(s.Schedule); });
+            ((FrameworkElement)hours).Margin = new Thickness(0, 6, 0, 0);
+            sched.Add(hours);
+        }
+        sched.Add(schedText);
+        body.Children.Add(Field("Zeitplan", sched.ToArray()));
+        var start = new StackPanel();
+        start.Children.Add(Switch("Mit Windows starten (im Infobereich)", s.Autostart, v => m.SetAutostart(v)));
+        start.Children.Add(Switch("Strg+Alt+R startet sofort einen Durchgang", s.Hotkey, v => m.SetHotkey(v)));
+        start.Children.Add(Switch("Fenster minimieren, damit ich zuschauen kann", m.ClearWindows, v => { m.ClearWindows = v; m.Changed(); }));
+        body.Children.Add(Field("Start", start));
+    }
+
+    // MARK: - Shelf page
+
+    void ShelfPage(StackPanel body)
+    {
+        var m = model;
+        body.Children.Add(Btn("Zurück", Kind.Quiet, () => { m.Page = Page.Main; m.Changed(); }, ""));
+        body.Children.Add(new Border { Height = 16 });
+        var shelf = FileOps.ShelfFor(DesktopReader.DesktopFolder);
+        var runs = FileOps.ShelfContents(shelf);
+        if (runs.Count == 0)
+        {
+            body.Children.Add(Text("Die Ablage ist leer. Hier landet, was RoboDust wegräumt.", 13, Primary));
+            return;
+        }
+        var total = runs.Sum(r => r.Bytes);
+        body.Children.Add(Text($"{runs.Count} {(runs.Count == 1 ? "Durchgang" : "Durchgänge")}, zusammen {Fmt.Bytes(total)}", 13, Primary, true));
+        var note = Text("Hier wird nichts gelöscht. Was weg soll, löschst du selbst im Explorer.");
+        note.Margin = new Thickness(0, 4, 0, 12);
+        body.Children.Add(note);
+        var list = new StackPanel();
+        foreach (var r in runs.Take(30))
+        {
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var age = (DateTime.Now - r.When).TotalDays;
+            var ageText = age < 1 ? "heute" : age < 2 ? "gestern" : $"vor {(int)age} Tagen";
+            var info = new StackPanel();
+            info.Children.Add(Text(r.Name, 13, Primary));
+            info.Children.Add(Text($"{r.Count} {(r.Count == 1 ? "Element" : "Elemente")} · {Fmt.Bytes(r.Bytes)} · {ageText}"));
+            row.Children.Add(info);
+            var open = Btn("Öffnen", Kind.Quiet, () => { try { System.Diagnostics.Process.Start("explorer.exe", $"\"{r.Path}\""); } catch { } });
+            open.Width = 90; open.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(open, 1);
+            row.Children.Add(open);
+            list.Children.Add(row);
+        }
+        body.Children.Add(new ScrollViewer { Content = list, MaxHeight = 420, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        var all = Btn("Ablage im Explorer öffnen", Kind.Quiet, () => { try { System.Diagnostics.Process.Start("explorer.exe", $"\"{shelf}\""); } catch { } });
+        all.Margin = new Thickness(0, 8, 0, 0);
+        body.Children.Add(all);
     }
 
     string FunBlurb => model.Fun switch
@@ -406,6 +541,10 @@ public sealed class Panel : Window
         FunMode.Bubbles => "Eine Seifenblasen-Pistole hinten. Die Blasen schweben übers Bild und platzen an deinen Symbolen.",
         FunMode.Confetti => "Konfetti für jedes eingesaugte Symbol, und am Ende feuert die Station eine Konfetti-Kanone ab.",
         FunMode.Disco => "Regenbogen-LEDs und bunte Lichtringe im Takt.",
+        FunMode.Laser => "Ein Laser zerlegt alles im Weg in bunte Pixel, und die saugt er dann auf.",
+        FunMode.Tornado => "Ein Tornado um den Roboter wirbelt alles in seiner Nähe herum, bevor es im Sog verschwindet.",
+        FunMode.Plow => "Es schneit. Mit dem Schneepflug schiebt er erst alles zu einem großen Haufen und saugt dann Haufen und Schnee weg.",
+        FunMode.Race => "Zwei Rivalen fahren mit und saugen um die Wette. Am Ende gibt es eine Siegerehrung.",
         FunMode.All => "Flammenwerfer, Seifenblasen, Konfetti und Disco auf einmal. Nur zum Anschauen, deinen Dateien passiert nichts.",
         _ => "Der Roboter saugt ganz normal.",
     };
@@ -605,6 +744,11 @@ public sealed class Panel : Window
                     var i = index;
                     cb.Checked += (_, _) => { m.Excluded.Remove(i); m.Changed(); };
                     cb.Unchecked += (_, _) => { m.Excluded.Add(i); m.Changed(); };
+                    // Rule: right-click to keep this one out of every clean from now on.
+                    var never = new MenuItem { Header = "Nie anfassen (für immer merken)" };
+                    never.Click += (_, _) => { m.Excluded.Add(i); var p = m.Sim?.Items[i].Entry.Path; if (p != null) m.NeverTouch(p); cb.IsChecked = false; };
+                    cb.ContextMenu = new ContextMenu();
+                    cb.ContextMenu.Items.Add(never);
                     list.Children.Add(cb);
                 }
                 body.Children.Add(new ScrollViewer { Content = list, Height = 170, Margin = new Thickness(0, 6, 0, 0), VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
@@ -688,6 +832,10 @@ public static class PanelShot
         var f = M(); f.Source = Source.Real; f.Result = new RunResult { Title = "105 Elemente in die Ablage geräumt", Detail = "Sie liegen in „~\\RoboDust Ablage\\2026-11-12 14.30.05“. 9 zur Sicherheit liegen gelassen.", CanUndo = true };
         f.Support = SupportCard.Asking;
         One(f, System.IO.Path.Combine(dir, "panel_result.png"));
+        var g = M(); g.Page = Page.Settings; g.Fun = FunMode.Plow; g.Settings.Skin = 2; g.Settings.Hat = true; g.Settings.Schedule = 2; g.Settings.MinAgeDays = 7;
+        One(g, System.IO.Path.Combine(dir, "panel_settings.png"));
+        var h = M(); h.Settings.Stats = new Stats { Runs = 12, Items = 312, Bytes = 14_200_000_000, Meters = 1234, Kinds = new() { ["Bilder"] = 120, ["Dokumente"] = 80 } };
+        One(h, System.IO.Path.Combine(dir, "panel_stats.png"));
     }
 }
 

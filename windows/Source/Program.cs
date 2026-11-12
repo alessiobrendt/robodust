@@ -23,6 +23,21 @@ public static class Program
         Console.WriteLine();
     }
 
+
+    /// Waits on a named signal from a second start, and hands it to the UI thread.
+    static void Listen(string name, Action onSignal)
+    {
+        var ev = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, name);
+        var t = new System.Threading.Thread(() =>
+        {
+            while (true)
+            {
+                ev.WaitOne();
+                Application.Current?.Dispatcher.BeginInvoke(onSignal);
+            }
+        }) { IsBackground = true };
+        t.Start();
+    }
     [STAThread]
     public static int Main(string[] argv)
     {
@@ -42,7 +57,7 @@ public static class Program
             var mode = int.TryParse(Value("--mode"), out var mm) ? (CleanMode)mm : CleanMode.Move;
             var scale = float.TryParse(Value("--pixel-scale"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ps) ? ps : 1;
             var follow = int.TryParse(Value("--follow"), out var f) ? f : 0;
-            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow, Has("--all-screens"), int.TryParse(Value("--dock-screen"), out var ds) ? ds : -1, int.TryParse(Value("--fun"), out var fn) ? (FunMode)fn : FunMode.Off); }
+            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow, Has("--all-screens"), int.TryParse(Value("--dock-screen"), out var ds) ? ds : -1, int.TryParse(Value("--fun"), out var fn) ? (FunMode)fn : FunMode.Off, int.TryParse(Value("--skin"), out var sk) ? (RobotSkin)sk : RobotSkin.White, Has("--hat")); }
             catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
             return 0;
         }
@@ -118,6 +133,23 @@ public static class Program
             controller.Model.Settings.SkipFinalClick = true;
         }
         if (Has("--sample-auto")) { Settings.Persists = false; controller.Model.Settings.SkipFinalClick = true; }
+        controller.StartInTray = Has("--tray") || Has("--scheduled");
+        controller.Scheduled = Has("--scheduled");
+        // One RoboDust at a time. A second start (a double-click, or the schedule while it sits in the
+        // tray) wakes the one that is running instead. Dev runs with flags stay separate.
+        var plain = args.All(a => a is "--tray" or "--scheduled");
+        System.Threading.Mutex single = null;
+        if (plain)
+        {
+            single = new System.Threading.Mutex(true, @"LocalRoboDust.Single", out var first);
+            if (!first)
+            {
+                try { System.Threading.EventWaitHandle.OpenExisting(Has("--scheduled") ? @"LocalRoboDust.Scheduled" : @"LocalRoboDust.Show").Set(); } catch { }
+                return 0;
+            }
+            Listen(@"LocalRoboDust.Show", () => controller.ShowPanel());
+            Listen(@"LocalRoboDust.Scheduled", () => controller.StartScheduled());
+        }
         app.Startup += (_, _) => controller.Start();
         app.DispatcherUnhandledException += (_, e) =>
         {
@@ -125,6 +157,8 @@ public static class Program
             MessageBox.Show("RoboDust ist auf einen Fehler gestoßen und hat deinen Desktop wiederhergestellt.\n\n" + e.Exception.Message, "RoboDust");
             e.Handled = true;
         };
-        return app.Run();
+        var code = app.Run();
+        GC.KeepAlive(single);
+        return code;
     }
 }

@@ -71,7 +71,7 @@ public static unsafe class Gl
     public static delegate* unmanaged<int, float, float, void> Uniform2f;
     public static delegate* unmanaged<int, float, float, float, float, void> Uniform4f;
     public static delegate* unmanaged<int, int, void> Uniform1i;
-    public static delegate* unmanaged<int, int, float*, void> Uniform4fv;
+    public static delegate* unmanaged<int, int, float*, void> Uniform4fv, Uniform3fv;
     public static delegate* unmanaged<int, int, int, int, uint, uint, void*, void> ReadPixels;
     public static delegate* unmanaged<uint, int, void> PixelStorei;
     public static delegate* unmanaged<uint> GetError;
@@ -171,6 +171,7 @@ public static unsafe class Gl
         Uniform4f = (delegate* unmanaged<int, float, float, float, float, void>)Proc("glUniform4f");
         Uniform1i = (delegate* unmanaged<int, int, void>)Proc("glUniform1i");
         Uniform4fv = (delegate* unmanaged<int, int, float*, void>)Proc("glUniform4fv");
+        Uniform3fv = (delegate* unmanaged<int, int, float*, void>)Proc("glUniform3fv");
         ReadPixels = (delegate* unmanaged<int, int, int, int, uint, uint, void*, void>)Proc("glReadPixels");
         PixelStorei = (delegate* unmanaged<uint, int, void>)Proc("glPixelStorei");
         GetError = (delegate* unmanaged<uint>)Proc("glGetError");

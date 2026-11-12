@@ -55,15 +55,89 @@ public sealed class AppController
             else m.Support = SupportCard.Hidden;
             m.Changed();
         };
-        m.Quit = Quit;
+        m.Quit = () => Quit(false);
         m.Changed = () => Panel?.Refresh();
+        var st = m.Settings;
+        m.SetAutostart = on =>
+        {
+            try { Startup.SetAutostart(on); st.Autostart = on; }
+            catch (Exception e) { m.Note = "Autostart ließ sich nicht ändern: " + e.Message; }
+            st.Save(); m.Changed();
+        };
+        m.SetHotkey = on =>
+        {
+            var ok = Startup.SetHotkey(PanelHandle, on);
+            st.Hotkey = on && ok;
+            if (!ok) m.Note = "Strg+Alt+R ist schon von einem anderen Programm belegt.";
+            st.Save(); m.Changed();
+        };
+        m.SetSchedule = v =>
+        {
+            var err = Startup.SetSchedule(v, st.ScheduleHour);
+            if (err == null) st.Schedule = v; else m.Note = "Zeitplan ließ sich nicht einrichten: " + err;
+            st.Save(); m.Changed();
+        };
+        m.NeverTouch = path => m.Set(() => { if (!st.NeverTouch.Contains(path, StringComparer.OrdinalIgnoreCase)) st.NeverTouch.Add(path); });
         if (TestRoot == null) m.LastRun = FileOps.LatestUndoable();
         Panel = new Panel(m);
-        Panel.Closed += (_, _) => Quit();
-        Panel.Show();
+        Panel.Closing += (_, e) =>
+        {
+            // With the shortcut, autostart or a schedule, RoboDust keeps running in the tray.
+            if (!quitting && KeepsRunning) { e.Cancel = true; Panel.Hide(); HintTray(); }
+        };
+        Panel.Closed += (_, _) => Quit(true);
+        if (!StartInTray) Panel.Show();
+        PanelHandle = new System.Windows.Interop.WindowInteropHelper(Panel).EnsureHandle();
+        System.Windows.Interop.HwndSource.FromHwnd(PanelHandle).AddHook(PanelHook);
+        if (st.Hotkey && !Startup.SetHotkey(PanelHandle, true)) { st.Hotkey = false; st.Save(); }
+        // The registry and Task Scheduler are the truth: settings follow them if changed outside.
+        st.Autostart = Startup.AutostartOn;
         BuildTray();
+        // A scheduled clean runs on the real desktop and leaves the user's windows alone.
+        if (Scheduled) { m.Source = Source.Real; ui.BeginInvoke(Begin, DispatcherPriority.ApplicationIdle); }
         if (AutoDemo) ui.BeginInvoke(Begin, DispatcherPriority.ApplicationIdle);
         if (AutoStop > 0) Delay(AutoStop, () => { FileOps.Trace($"auto stop: {overlays.Count} window(s), {sim?.Items.Count} items, {sim?.Phase}, robot at {sim?.Pos}, room {(sim != null ? sim.Plan.RoomOf(sim.Pos) : -1)}"); StopAndRestore(); Quit(); });
+    }
+
+    public bool StartInTray, Scheduled;
+
+    public void ShowPanel() { Panel.Show(); Panel.Activate(); }
+
+    /// The schedule fired while RoboDust was already running in the tray.
+    public void StartScheduled()
+    {
+        if (Model.Stage != Stage.Ready) return;
+        Scheduled = true;
+        Model.Source = Source.Real;
+        Model.Page = Page.Main;
+        Begin();
+    }
+    IntPtr PanelHandle;
+    bool trayHinted;
+    bool KeepsRunning => Model.Settings.Hotkey || Model.Settings.Autostart || Model.Settings.Schedule != 0;
+
+    IntPtr PanelHook(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
+    {
+        if (msg == Startup.WM_HOTKEY && (int)w == Startup.HotkeyId)
+        {
+            handled = true;
+            if (Model.Stage == Stage.Ready) { Model.Page = Page.Main; Panel.Show(); Begin(); }
+        }
+        return IntPtr.Zero;
+    }
+
+    void HintTray()
+    {
+        if (trayHinted || tray == null) return;
+        trayHinted = true;
+        tray.ShowBalloonTip(4000, "RoboDust läuft weiter", "Im Infobereich, für Strg+Alt+R und den Zeitplan. Beenden über das Symbol dort.", Forms.ToolTipIcon.None);
+    }
+
+    /// A tray notification; clicking it brings the panel up, where Undo is.
+    void Notify(string title, string text)
+    {
+        if (tray == null) return;
+        tray.ShowBalloonTip(8000, title, text, Forms.ToolTipIcon.None);
     }
 
     void BuildTray()
@@ -77,6 +151,7 @@ public sealed class AppController
         menu.Items.Add("Beenden", null, (_, _) => Quit());
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => { Panel.Show(); Panel.Activate(); };
+        tray.BalloonTipClicked += (_, _) => { Panel.Show(); Panel.Activate(); };
     }
 
     void ShowAbout()
@@ -88,11 +163,14 @@ public sealed class AppController
             "Über RoboDust", MessageBoxButton.OK, MessageBoxImage.None);
     }
 
-    void Quit()
+    /// force: really quit. Otherwise, with the shortcut, autostart or a schedule on, the panel just hides.
+    void Quit(bool force = true)
     {
         if (Model.Applying || quitting) return;
+        if (!force && KeepsRunning && Model.Stage == Stage.Ready) { Panel.Hide(); HintTray(); return; }
         quitting = true;
         Teardown();
+        if (PanelHandle != IntPtr.Zero) Startup.SetHotkey(PanelHandle, false);
         if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
         Application.Current.Shutdown();
     }
@@ -159,6 +237,8 @@ public sealed class AppController
             for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
             s.Mode = m.Mode;
             s.Fun = m.Fun;
+            s.Skin = (RobotSkin)m.Settings.Skin;
+            s.RemoteControl = m.Settings.RemoteControl;
             s.SkipFinalClick = false;   // handled here, so that it goes through the real file action
             s.RealRun = real;
             foreach (var it in s.Items)
@@ -169,6 +249,12 @@ public sealed class AppController
                     || (s.Mode == CleanMode.Move && e.CloudOnly)
                     || (s.Mode == CleanMode.Hide && e.Hidden);
                 if (s.Mode == CleanMode.Tidy && view == null && real) it.Protected = true;   // a test folder has no icons to arrange
+                // The user's own rules: things they said never to touch, and things too recently changed.
+                if (s.Mode != CleanMode.Tidy && e.Path != null && !it.Protected)
+                {
+                    if (m.Settings.NeverTouch.Contains(e.Path, StringComparer.OrdinalIgnoreCase)) { it.Protected = true; e.ProtectedReason = "Von dir geschützt"; }
+                    else if (m.Settings.MinAgeDays > 0 && e.Modified is { } mod && (DateTime.UtcNow - mod).TotalDays < m.Settings.MinAgeDays) { it.Protected = true; e.ProtectedReason = $"Jünger als {m.Settings.MinAgeDays} Tage"; }
+                }
             }
             // One window per display, each showing its own slice of the same floor.
             overlays.Clear();
@@ -180,6 +266,7 @@ public sealed class AppController
                 using (var wall = SafeWallpaper(screen)) o.Renderer.SetWallpaper(wall);
                 o.Renderer.SetSprites(sprites);
                 o.Renderer.LidarRadius = MathF.Max(plan.Bounds.W, plan.Bounds.H) * 0.85f;
+                o.Renderer.Skin = (RobotSkin)m.Settings.Skin; o.Renderer.Hat = m.Settings.Hat;
                 o.Sim = s;
                 o.OnEscape = () => { if (!m.Applying) StopAndRestore(); };
                 o.OnSpace = () => m.TogglePause();
@@ -198,7 +285,7 @@ public sealed class AppController
             synth.Muted = m.Muted;
             synth.StartLive();
             sim = s;
-            if (m.ClearWindows) MinimizeWindows();
+            if (m.ClearWindows && !Scheduled) MinimizeWindows();
             foreach (var o in overlays) o.ShowAboveDesktop();
             m.Total = collectable.Count;
             m.TotalBytes = collectable.Sum(i => i.Entry.Bytes);
@@ -232,6 +319,7 @@ public sealed class AppController
     {
         var s = sim;
         if (s == null || fading && s.Phase == Phase.Finished) return;
+        if (s.RemoteControl) s.SetManual(ArrowKeys.Throttle(), ArrowKeys.Steer());
         var dt = Overlay.Step(s, overlays, clock, ref lastFrame, ref frameAcc);
         foreach (var o in overlays.ToList()) o.Render(dt);
         if (s.Phase == Phase.Finished) FinishRun();
@@ -242,6 +330,7 @@ public sealed class AppController
         var s = sim; var m = Model;
         if (s == null) return;
         m.Status = s.Status;
+        if (s.RaceLine is { } race) m.Status = s.Phase >= Phase.Done ? $"Sieger: {s.Winner}! ({race})" : $"{s.Status} · {race}";
         foreach (var o in overlays) o.KeepAboveDesktop();   // after Win+D
         if (m.Phase != s.Phase) FileOps.Trace($"phase {s.Phase} t={s.T:0.0} collected={s.Collected}/{s.Items.Count} room={s.Plan.RoomOf(s.Pos)}");
         m.Phase = s.Phase;
@@ -328,6 +417,7 @@ public sealed class AppController
         if (excludedCount > 0) notes.Add($"{excludedCount} behalten, wie gewünscht.");
         if (m.LeftAlone > 0) notes.Add($"{m.LeftAlone} zur Sicherheit liegen gelassen.");
         if (n == 0) title = "Nichts wurde verändert";
+        CountStats(o);
         var run = o.Run;
         if (n > 0 && run != null)
         {
@@ -340,6 +430,32 @@ public sealed class AppController
         m.Result = new RunResult { Title = title, Detail = notes.Count > 0 ? string.Join(" ", notes) : null, CanUndo = undoAction != null, IsError = n == 0 && o.Failed.Count > 0 };
     }
 
+
+    /// What this run cleaned up, added to the totals on the panel. Kept on this PC only.
+    void CountStats(FileOps.Outcome o)
+    {
+        if (TestRoot != null || sim == null) return;
+        var st = Model.Settings.Stats;
+        foreach (var i in o.Done)
+        {
+            if (i < 0 || i >= sim.Items.Count) continue;
+            var e = sim.Items[i].Entry;
+            st.Items++; st.Bytes += e.Bytes;
+            var k = e.Kind switch { Kind.Folder => "Ordner", Kind.Image => "Bilder", Kind.Video => "Videos", Kind.Document => "Dokumente", Kind.Archive => "Archive", Kind.Audio => "Musik", _ => "Sonstiges" };
+            st.Kinds[k] = st.Kinds.TryGetValue(k, out var n) ? n + 1 : 1;
+        }
+        Model.Settings.Save();
+    }
+
+    /// A finished run: one more, and the distance driven, measured as if the robot were a real one.
+    void CountRun()
+    {
+        if (TestRoot != null || sim == null) return;
+        var st = Model.Settings.Stats;
+        st.Runs++;
+        st.Meters += sim.Distance * 0.17 / sim.R;   // a real robot's radius is about 17 cm
+        Model.Settings.Save();
+    }
     static string ShortPath(string p)
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -440,6 +556,7 @@ public sealed class AppController
     void FinishRun()
     {
         if (fading) return;
+        CountRun();
         fading = true;
         FileOps.Trace("finish run");
         var fading_ = overlays.ToList();
@@ -455,9 +572,10 @@ public sealed class AppController
             Teardown();
             Model.Stage = Stage.Ready;
             if (TestRoot == null && Model.Result == null) Model.LastRun = FileOps.LatestUndoable();
+            if (Scheduled && Model.Result != null) Notify("RoboDust: " + Model.Result.Title, (Model.Result.Detail ?? "") + (Model.Result.CanUndo ? " Klick hier, um es rückgängig zu machen." : ""));
             OfferSupportOnce();
-            if (AutoUndo && undoAction != null) Delay(1, () => { RunUndo(); if (AutoQuit) Delay(2.5, Quit); });
-            else if (AutoQuit) Delay(1, Quit);
+            if (AutoUndo && undoAction != null) Delay(1, () => { RunUndo(); if (AutoQuit) Delay(2.5, () => Quit()); });
+            else if (AutoQuit) Delay(1, () => Quit());
             Model.Changed();
         };
         t.Start();
@@ -569,4 +687,19 @@ public static class DesktopWindows
             if (Native.IsWindow(h) && Native.IsIconic(h)) Native.ShowWindowAsync(h, Native.SW_RESTORE);
         }
     }
+}
+
+/// Arrow keys for driving the robot yourself. Only while RoboDust itself is in front, so they
+/// never steer the robot while you type somewhere else.
+public static class ArrowKeys
+{
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
+    static bool Down(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
+    static bool Ours()
+    {
+        Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out var pid);
+        return pid == (uint)Environment.ProcessId;
+    }
+    public static float Throttle() => !Ours() ? 0 : (Down(0x26) ? 1 : 0) - (Down(0x28) ? 0.6f : 0);   // up, down
+    public static float Steer() => !Ours() ? 0 : (Down(0x27) ? 1 : 0) - (Down(0x25) ? 1 : 0);         // right, left
 }

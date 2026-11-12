@@ -24,7 +24,9 @@ public sealed unsafe class Renderer
     }
 
     public readonly V2 SizePts;
-    readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade;
+    readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade;
+    public RobotSkin Skin;
+    public bool Hat;
     readonly uint emptyVao, spriteVao, partVao, gridBuf, instBuf, partBuf;
     readonly int gridCount;
     uint wall, track, trackFbo, iconTex, labelTex, logoTex;
@@ -52,6 +54,7 @@ public sealed unsafe class Renderer
         pLidar = new Prog(Shaders.LidarVS, Shaders.LidarFS);
         pStamp = new Prog(Shaders.StampVS, Shaders.StampFS);
         pFade = new Prog(Shaders.FadeVS, Shaders.FadeFS);
+        pBlade = new Prog(Shaders.BladeVS, Shaders.BladeFS);
 
         emptyVao = Gl.Gen(Gl.GenVertexArrays);
 
@@ -198,9 +201,14 @@ public sealed unsafe class Renderer
         }
         foreach (var it in sim.Items)
         {
+            intake = sim.IntakeFor(it);   // a rival may be the one pulling it in
+            DrawItem(it);
+        }
+        void DrawItem(Item it)
+        {
             var flying = it.Flight != Flight.None && it.FlightDelay <= 0;
-            if (it.Flight != Flight.None && it.FlightDelay > 0 && it.Flight != Flight.ToBag && it.InDock) continue;
-            if (it.InBin || (it.InDock && !flying)) continue;
+            if (it.Flight != Flight.None && it.FlightDelay > 0 && it.Flight != Flight.ToBag && it.InDock) return;
+            if (it.InBin || (it.InDock && !flying)) return;
             var far = intake + new V2(0, 100000);
             if (!it.Icon.Gone || flying)
             {
@@ -216,7 +224,8 @@ public sealed unsafe class Renderer
                     Center = it.Icon.Pos + jitter, Half = iconHalf, Intake = flying ? far : intake, Angle = it.Icon.Ang + wob, Scale = scale,
                     Alpha = 1, Slice = it.Index, Pull = f.pull, Agit = flying || !f.near ? 0 : a,
                     // Burnt things stay burnt on the way into the bag: charred scraps rather than whole icons.
-                    Burn = it.Flight == Flight.ToBag ? (it.Scorch > 0.99f ? 0.55f : 0) : it.Burn,
+                    // Laser bits fall apart into pixels (a negative burn), fire into ash.
+                    Burn = it.Flight == Flight.ToBag ? (it.BurnStyle == 1 && it.Scorch < 0.5f && it.Burn > 0.99f ? -0.5f : it.Scorch > 0.99f ? 0.55f : 0) : (it.BurnStyle == 1 ? -it.Burn : it.Burn),
                     ShadowOffset = new V2(2, 3) + new V2(5, 9) * lift, ShadowAlpha = 0.34f * MathF.Max(lift, 0),
                 };
                 if (it.Ping > 0) { inst.TR = 0.45f; inst.TG = 0.95f; inst.TB = 1; inst.TA = it.Ping * 0.55f; }
@@ -243,7 +252,7 @@ public sealed unsafe class Renderer
                 var inst = new Inst
                 {
                     Center = lpos, Half = labelHalf, Intake = flying ? far : intake, Angle = lang, Scale = scale, Alpha = 1, Slice = it.Index,
-                    Pull = lf.Item1, Agit = flying ? 0 : a, Burn = attached ? it.Burn : it.LabelBurn,
+                    Pull = lf.Item1, Agit = flying ? 0 : a, Burn = attached ? (it.BurnStyle == 1 ? -it.Burn : it.Burn) : it.LabelBurn,
                 };
                 if (it.Ping > 0) { inst.TR = 0.55f; inst.TG = 0.97f; inst.TB = 1; inst.TA = it.Ping * 0.7f; }
                 if (flying || it.Label.Ingesting) topLabels.Add(inst); else groundLabels.Add(inst);
@@ -383,6 +392,12 @@ public sealed unsafe class Renderer
                 case PartKind.Confetti:
                     a = q.A * M.Smooth(0, 0.35f, k);
                     break;
+                case PartKind.Snow:
+                    a = q.A * M.Smooth(0, 0.03f, k) * M.Smooth(1, 0.985f, k);
+                    break;
+                case PartKind.Swirl:
+                    a = q.A * MathF.Sin(k * M.Pi);
+                    break;
                 case PartKind.Glow:
                     glow = 1;
                     a = q.A * k;
@@ -411,6 +426,25 @@ public sealed unsafe class Renderer
         return (a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t);
     }
 
+    /// Body colour, top plate, gloss and metal for each look.
+    static (V3 body, V3 plate, float gloss, float metal) SkinOf(RobotSkin s) => s switch
+    {
+        RobotSkin.Black => (new V3(0.07f, 0.07f, 0.08f), new V3(0.02f, 0.02f, 0.025f), 0.55f, 0),
+        RobotSkin.Gold => (new V3(0.95f, 0.74f, 0.32f), new V3(0.08f, 0.06f, 0.04f), 0.75f, 0.85f),
+        RobotSkin.Retro => (new V3(0.86f, 0.80f, 0.66f), new V3(0.42f, 0.33f, 0.24f), 0.18f, 0),
+        RobotSkin.Pink => (new V3(0.97f, 0.62f, 0.76f), new V3(0.12f, 0.06f, 0.09f), 0.35f, 0),
+        _ => (new V3(0.90f, 0.90f, 0.88f), new V3(0.055f, 0.058f, 0.065f), 0.28f, 0),
+    };
+
+    struct BotPose
+    {
+        public V2 Pos, Shake, BrushL, BrushR;
+        public float Heading, R, Scale, Alpha, Height, BrushAngle, BrushSpeed, Lidar, Bumper, LedPulse;
+        public V3 Led;
+        public RobotSkin Skin;
+        public bool Hat;
+    }
+
     void DrawRobot(Sim sim)
     {
         var drop = sim.DockDrop;
@@ -418,30 +452,68 @@ public sealed unsafe class Renderer
         var dropScale = 1 + (1 - bounce) * 0.55f;
         var liftK = sim.Lift;
         var scale = dropScale * (1 + liftK * 0.13f);
-        var R = sim.R * scale;
-        var alpha = sim.RobotAlpha * M.Smooth(0, 0.35f, drop);
-        var height = (1 - bounce) + liftK * 0.9f;
         var shakeP = new V2(MathF.Sin(sim.T * 83), MathF.Cos(sim.T * 71)) * sim.Shake * 2.6f;
         if (sim.Picked) shakeP = new V2(MathF.Sin(sim.T * 19), MathF.Cos(sim.T * 15)) * 1.2f;
-        var pos = sim.Pos;
+        var (l, r) = sim.BrushCenters;
+        var alpha = sim.RobotAlpha * M.Smooth(0, 0.35f, drop);
+        // The rivals in a race: same body, their own colours.
+        foreach (var rv in sim.Rivals)
+        {
+            var (rl, rr) = rv.BrushCenters;
+            DrawBot(new BotPose
+            {
+                Pos = rv.Pos, Heading = rv.Heading, R = rv.R * dropScale, Scale = dropScale, Alpha = alpha, Height = 1 - bounce,
+                BrushL = rl, BrushR = rr, BrushAngle = rv.BrushAngle, BrushSpeed = rv.BrushSpeed, Lidar = rv.LidarAngle, LedPulse = rv.LedPulse,
+                Led = rv.Led, Skin = rv.Skin,
+            });
+        }
+        // The snowplow's blade sits in front, under the bumper.
+        if (sim.Plowing && sim.Phase is not (Phase.Dropping or Phase.Undocking or Phase.Docking or Phase.Emptying))
+        {
+            pBlade.Use(SizePts, Origin);
+            Gl.BindVertexArray(emptyVao);
+            pBlade.F2("center", sim.Pos + sim.Fwd * (sim.R * 1.02f) + shakeP); pBlade.F2("half_", sim.R * 0.14f, sim.R * 1.08f);
+            pBlade.F("angle", sim.Heading); pBlade.F("alpha", alpha);
+            var c = pBlade["color"];
+            unsafe { var v = stackalloc float[3] { 0.98f, 0.6f, 0.1f }; Gl.Uniform3fv(c, 1, v); }
+            Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+        }
+        DrawBot(new BotPose
+        {
+            Pos = sim.Pos, Heading = sim.Heading, R = sim.R * scale, Scale = scale, Alpha = alpha, Height = (1 - bounce) + liftK * 0.9f, Shake = shakeP,
+            BrushL = l, BrushR = r, BrushAngle = sim.BrushAngle, BrushSpeed = sim.BrushSpeed, Lidar = sim.LidarAngle, Bumper = sim.Bumper, LedPulse = sim.LedPulse,
+            Led = sim.Led, Skin = Skin, Hat = Hat,
+        });
+    }
+
+    void DrawBot(BotPose b)
+    {
+        var pos = b.Pos; var R = b.R; var alpha = b.Alpha; var height = b.Height;
         // Two-part shadow: a tight contact core and a wide soft one.
         Shadow(pos, R * 0.985f, 0.40f * (1 - height * 0.5f) * alpha, new V2(2, 3) + new V2(26, 44) * height, 7 + 18 * height, 0, V2.Zero);
         Shadow(pos, R * 0.985f, 0.30f * (1 - height * 0.5f) * alpha, new V2(10, 16) + new V2(34, 58) * height, 26 + 34 * height, 0, V2.Zero);
         // Side brushes reach out from under the shell.
-        var (l, r) = sim.BrushCenters;
         pBrush.Use(SizePts, Origin);
         Gl.BindVertexArray(emptyVao);
         for (int i = 0; i < 2; i++)
         {
-            var c = i == 0 ? l : r;
-            pBrush.F2("center", pos + (c - pos) * scale + shakeP); pBrush.F("radius", R * 0.56f); pBrush.F("angle", sim.BrushAngle);
-            pBrush.F("speed", sim.BrushSpeed); pBrush.F("alpha", alpha); pBrush.F("sign_", i == 0 ? 1 : -1);
+            var c = i == 0 ? b.BrushL : b.BrushR;
+            pBrush.F2("center", pos + (c - pos) * b.Scale + b.Shake); pBrush.F("radius", R * 0.56f); pBrush.F("angle", b.BrushAngle);
+            pBrush.F("speed", b.BrushSpeed); pBrush.F("alpha", alpha); pBrush.F("sign_", i == 0 ? 1 : -1);
             Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
         }
+        var sk = SkinOf(b.Skin);
         pRobot.Use(SizePts, Origin);
-        pRobot.F2("center", pos); pRobot.F("radius", R); pRobot.F2("shake", shakeP);
-        pRobot.F("heading", sim.Heading); pRobot.F("lidar", sim.LidarAngle); pRobot.F("bumper", sim.Bumper); pRobot.F("ledPulse", sim.LedPulse);
-        pRobot.F4("led", sim.Led.X, sim.Led.Y, sim.Led.Z, 1); pRobot.F("alpha", alpha);
+        pRobot.F2("center", pos); pRobot.F("radius", R); pRobot.F2("shake", b.Shake);
+        pRobot.F("heading", b.Heading); pRobot.F("lidar", b.Lidar); pRobot.F("bumper", b.Bumper); pRobot.F("ledPulse", b.LedPulse);
+        pRobot.F4("led", b.Led.X, b.Led.Y, b.Led.Z, 1); pRobot.F("alpha", alpha);
+        unsafe
+        {
+            var body = stackalloc float[3] { sk.body.X, sk.body.Y, sk.body.Z };
+            var plate = stackalloc float[3] { sk.plate.X, sk.plate.Y, sk.plate.Z };
+            Gl.Uniform3fv(pRobot["bodyCol"], 1, body); Gl.Uniform3fv(pRobot["plateCol"], 1, plate);
+        }
+        pRobot.F("bodyGloss", sk.gloss); pRobot.F("bodyMetal", sk.metal); pRobot.F("hat", b.Hat ? 1 : 0);
         Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, logoTex); pRobot.I("logo", 0);
         Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
     }

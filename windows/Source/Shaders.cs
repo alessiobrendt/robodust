@@ -116,22 +116,32 @@ float vnoise(vec2 p) {
 void main() {
     // Fun mode: burning to ash. Holes open where the noise is lowest and spread, with a glowing rim.
     float edge = 0.0;
+    float amount = abs(burn);
     if (burn > 0.001) {
         vec2 q = uv * vec2(7.0, 7.0) + vec2(slice * 3.17, slice * 1.31);
         float n = vnoise(q) * 0.65 + vnoise(q * 2.7) * 0.35;
         float t = burn * 1.15 - 0.08;
         if (n < t) discard;
         edge = 1.0 - smoothstep(0.0, 0.09, n - t);
+    } else if (burn < -0.001) {
+        // The laser: square pixels drop out one by one, each lit cyan just before it goes.
+        vec2 cell = floor(uv * 12.0);
+        float n = hash(cell + vec2(slice * 1.7, slice * 0.9));
+        float t = amount * 1.1 - 0.05;
+        if (n < t) discard;
+        edge = 1.0 - smoothstep(0.0, 0.12, n - t);
     }
     if (shadowPass == 1) {
         float a = texture(tex, vec3(uv, slice), 2.2).a;
-        o = vec4(0.0, 0.0, 0.0, a * shadowAlpha * alpha * (1.0 - burn));
+        o = vec4(0.0, 0.0, 0.0, a * shadowAlpha * alpha * (1.0 - amount));
     } else {
         vec4 c = texture(tex, vec3(uv, slice));
         c.rgb = mix(c.rgb, tint.rgb * c.a, tint.a);
         if (burn > 0.001) {
             c.rgb = mix(c.rgb, vec3(0.05, 0.04, 0.035) * c.a, smoothstep(0.0, 0.45, burn) * 0.9);
             c.rgb += vec3(1.0, 0.45, 0.08) * edge * c.a * 1.7;
+        } else if (burn < -0.001) {
+            c.rgb += vec3(0.3, 0.9, 1.0) * edge * c.a * 1.2;
         }
         o = c * alpha;
     }
@@ -145,7 +155,7 @@ layout(location = 2) in vec4 p2;   // chip (0 dot, 1 paper chip, 2 soap bubble),
 out vec2 q; out vec4 color; out float chip; out float glow;
 void main() {
     q = kQuad[gl_VertexID]; float c = cos(p0.w), s = sin(p0.w);
-    vec2 l = q * p0.z; if (p2.x > .5 && p2.x < 1.5) l.y *= .55;
+    vec2 l = q * p0.z; if (p2.x > .5 && p2.x < 1.1) l.y *= .55;   // 1.1...1.5 stays square: pixels
     gl_Position = toClip(p0.xy + vec2(c*l.x - s*l.y, s*l.x + c*l.y));
     color = p1; chip = p2.x; glow = p2.y;
 }";
@@ -213,6 +223,7 @@ void main() {
 in vec2 p; out vec4 o;
 uniform float radius; uniform float heading; uniform float lidar; uniform float bumper; uniform float ledPulse;
 uniform vec4 led; uniform float alpha;
+uniform vec3 bodyCol; uniform vec3 plateCol; uniform float bodyGloss; uniform float bodyMetal; uniform float hat;   // skins
 uniform sampler2D logo;
 
 float robotHeight(vec2 l, out int mat, out float ao) {
@@ -290,10 +301,10 @@ void main() {
     vec2 gw = vec2(cw*g.x - sw*g.y, sw*g.x + cw*g.y);
     vec3 N = normalize(vec3(-gw * 1.05, 1.0));
 
-    Mat m; m.albedo = vec3(.90, .90, .88); m.gloss = .28; m.metal = 0.0; m.emis = 0.0; m.emisColor = vec3(0.0);
-    if (mat == 1) { m.albedo = vec3(.84, .84, .83); m.gloss = .20; }                  // bumper
+    Mat m; m.albedo = bodyCol; m.gloss = bodyGloss; m.metal = bodyMetal; m.emis = 0.0; m.emisColor = vec3(0.0);
+    if (mat == 1) { m.albedo = bodyCol * .93; m.gloss = bodyGloss * .75; }          // bumper
     else if (mat == 2) { m.albedo = vec3(.018, .019, .022); m.gloss = 1.0; }          // sensor window
-    else if (mat == 3) { m.albedo = vec3(.055, .058, .065); m.gloss = .72; }          // top plate
+    else if (mat == 3) { m.albedo = plateCol; m.gloss = .72; }                       // top plate
     else if (mat == 4) { m.albedo = vec3(.035, .035, .04); m.gloss = .4; }            // pill
     else if (mat == 5) { m.albedo = vec3(.72, .73, .75); m.gloss = .5; m.metal = .6; } // buttons
     else if (mat == 6) { m.albedo = vec3(.62, .62, .62); m.gloss = .16; }             // turret skirt
@@ -325,6 +336,26 @@ void main() {
     }
 
     vec3 col = shade(N, m, ao) + extra;
+    // A party hat, seen from straight above: a striped cone with a pompom on top.
+    if (hat > 0.5) {
+        vec2 hp = l - vec2(-0.08, 0.0);
+        float hr = length(hp);
+        col *= 1.0 - 0.35 * smoothstep(0.38, 0.27, hr) * step(0.27, hr);   // its shadow on the plate
+        if (hr < 0.27) {
+            vec2 dl = hp / max(hr, 1e-3);
+            float cw2 = cos(heading), sw2 = sin(heading);
+            vec2 dw = vec2(cw2*dl.x - sw2*dl.y, sw2*dl.x + cw2*dl.y);
+            float stripe = step(0.5, fract(atan(hp.y, hp.x) / 6.2831 * 8.0));
+            Mat hm; hm.albedo = mix(vec3(0.95, 0.25, 0.45), vec3(0.25, 0.72, 0.95), stripe); hm.gloss = 0.3; hm.metal = 0.0; hm.emis = 0.0; hm.emisColor = vec3(0.0);
+            col = shade(normalize(vec3(dw * 0.9, 0.45)), hm, 1.0);
+            float pom = smoothstep(0.085, 0.065, hr);
+            if (pom > 0.0) {
+                Mat pm; pm.albedo = vec3(1.0, 0.92, 0.55); pm.gloss = 0.1; pm.metal = 0.0; pm.emis = 0.0; pm.emisColor = vec3(0.0);
+                vec3 np = normalize(vec3(dw * (hr / 0.085) * 0.9, 1.0));
+                col = mix(col, shade(np, pm, 1.0), pom);
+            }
+        }
+    }
     // Grounding: the rim rolls off a touch into its own shadow.
     col *= mix(.7, 1.0, smoothstep(1.0, .90, rr));
     o = vec4(col * edge * alpha, edge * alpha);
@@ -504,5 +535,29 @@ void main() {
     float i = (tail + line + rings) * fall * alpha;
     vec3 c = vec3(.32, .86, 1.0);
     o = vec4(c * i, i * .55);
+}";
+
+    // ---------- snowplow blade ----------
+    public const string BladeVS = Head + @"
+uniform vec2 center; uniform vec2 half_; uniform float angle;
+out vec2 q;
+void main() {
+    q = kQuad[gl_VertexID]; float c = cos(angle), s = sin(angle);
+    vec2 l = q * (half_ + 3.0); gl_Position = toClip(center + vec2(c*l.x - s*l.y, s*l.x + c*l.y));
+    q = l;
+}";
+    public const string BladeFS = Head + @"
+in vec2 q; out vec4 o;
+uniform vec2 half_; uniform vec3 color; uniform float alpha;
+float sdBox(vec2 p, vec2 b, float r) { vec2 d = abs(p) - b + r; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r; }
+void main() {
+    float d = sdBox(q, half_, min(half_.x, half_.y) * 0.6);
+    float a = 1.0 - smoothstep(-1.0, 1.0, d);
+    if (a <= 0.0) discard;
+    // A curved steel-and-paint blade: lit along its top, darker at the base, a bright lip.
+    float t = clamp(q.x / half_.x * 0.5 + 0.5, 0.0, 1.0);
+    vec3 col = color * mix(0.55, 1.15, t) + vec3(0.25) * smoothstep(0.8, 1.0, t);
+    col *= 1.0 - 0.35 * smoothstep(-6.0, 0.0, d);
+    o = vec4(col * a * alpha, a * alpha);
 }";
 }

@@ -59,6 +59,11 @@ public sealed class Item
     public bool Burning;     // fun mode only: on fire, crumbling to ash
     public float Burn, LabelBurn;   // 0...1, how much has turned to ash (a picture: the file is fine)
     public bool LabelBurning;
+    public int BurnStyle;    // 0 fire, 1 laser
+    public int TakenBy = -1; // fun mode race: the rival pulling it in, or -1 for RoboDust
+    public bool ViaRival;    // in the bin because a rival got it
+    public bool Carried;     // fun mode snowplow: riding on the blade
+    public V2 CarryOff;
 
     public Item(int index, DesktopEntry entry)
     {
@@ -73,7 +78,7 @@ public sealed class Item
     public bool OnFloor => !InBin && !InDock && Flight == Flight.None && !Icon.Gone && !Protected;
 }
 
-public enum PartKind { Dust = 0, Fire = 1, Smoke = 2, Bubble = 3, Confetti = 4, Glow = 5, Ash = 6 }
+public enum PartKind { Dust = 0, Fire = 1, Smoke = 2, Bubble = 3, Confetti = 4, Glow = 5, Ash = 6, Swirl = 7, Snow = 8 }
 
 public struct Particle
 {
@@ -241,7 +246,7 @@ public sealed partial class Sim
         if (Phase is Phase.Emptying or Phase.Done) Battery = MathF.Min(1, Battery + dt * 0.01f);
     }
 
-    public bool SuctionOn => Phase is Phase.Cleaning or Phase.Hunting || (Phase == Phase.Returning && !finishing && Remaining > 0);
+    public bool SuctionOn => !Plowing && (Phase is Phase.Cleaning or Phase.Hunting || (Phase == Phase.Returning && !finishing && Remaining > 0));
 
     // MARK: - Phases
 
@@ -459,7 +464,7 @@ public sealed partial class Sim
         Item best = null; float bd = float.PositiveInfinity;
         foreach (var it in Items)
         {
-            if (!it.OnFloor || it.Icon.Ingesting || it.Burning || it.Grabbed) continue;
+            if (!it.OnFloor || it.Icon.Ingesting || it.Burning || it.Grabbed || it.Carried || InPileNow(it)) continue;
             var d = (it.Icon.Pos - Pos).Len;
             if (d < bd) { bd = d; best = it; }
         }
@@ -476,7 +481,7 @@ public sealed partial class Sim
         var at = Pos;
         foreach (var room in Plan.VisitOrder(Pos))
         {
-            var live = Items.Where(i => i.OnFloor && Plan.RoomOf(i.Icon.Pos) == room).Select(i => i.Icon.Pos).ToList();
+            var live = Items.Where(i => i.OnFloor && !i.Carried && !InPileNow(i) && Plan.RoomOf(i.Icon.Pos) == room).Select(i => i.Icon.Pos).ToList();
             if (live.Count == 0) continue;
             var lanes = LanesIn(Plan.Rooms[room], live, at);
             if (lanes.Count == 0) continue;
@@ -548,6 +553,7 @@ public sealed partial class Sim
 
     void FollowPath(float dt)
     {
+        if (ManualActive) { DriveManual(dt); return; }
         if (PathI >= path.Count) { DriveRaw(0, 0, dt); return; }
         // Mouse in the way: bump, back off, swing round, like a real one meeting a foot.
         if (maneuver is { } m)
@@ -727,6 +733,7 @@ public sealed partial class Sim
             it.Land = MathF.Max(0, it.Land - dt * 4);
             if (it.Flight != Flight.None) { UpdateFlight(it, dt); continue; }
             if (it.InBin || it.InDock) continue;
+            if (it.Carried) { CarryItem(it, dt); continue; }
             if (it.Protected)
             {
                 // Not for collecting: can be nudged by the robot, but always settles back on its spot.
@@ -742,14 +749,22 @@ public sealed partial class Sim
                 else if (it.Burning) UpdateBurn(it, dt);
                 else if (it.Icon.Ingesting)
                 {
-                    AdvanceIngest(ref it.Icon, it.IngestTime, dt);
-                    Heavy = MathF.Max(Heavy, M.Clamp((it.Mass - 1.8f) / 3.2f, 0, 1));
-                    if (it.Mass > 3) Shake = MathF.Max(Shake, 0.28f * it.Mass / 6);
+                    // A rival robot may be the one pulling it in.
+                    AdvanceIngest(ref it.Icon, it.IngestTime, dt, IntakeFor(it));
+                    if (it.TakenBy < 0)
+                    {
+                        Heavy = MathF.Max(Heavy, M.Clamp((it.Mass - 1.8f) / 3.2f, 0, 1));
+                        if (it.Mass > 3) Shake = MathF.Max(Shake, 0.28f * it.Mass / 6);
+                    }
                     if (it.Icon.Gone)
                     {
-                        it.InBin = true; BinCount++; BinBytes += it.Entry.Bytes;
-                        Collected++; CollectedBytes += it.Entry.Bytes;
-                        if (it.Mass > 3) Audio?.Chirp((392, 0.05f));
+                        if (it.TakenBy >= 0) RivalGot(it);
+                        else
+                        {
+                            it.InBin = true; BinCount++; BinBytes += it.Entry.Bytes;
+                            Collected++; CollectedBytes += it.Entry.Bytes;
+                            if (it.Mass > 3) Audio?.Chirp((392, 0.05f));
+                        }
                     }
                 }
                 else
@@ -801,11 +816,13 @@ public sealed partial class Sim
         }
     }
 
-    void AdvanceIngest(ref Body b, float duration, float dt)
+    void AdvanceIngest(ref Body b, float duration, float dt) => AdvanceIngest(ref b, duration, dt, Intake);
+
+    void AdvanceIngest(ref Body b, float duration, float dt, V2 intake)
     {
         b.Pull = MathF.Min(1, b.Pull + dt / duration);
         var k = 1 - MathF.Exp(-dt * (2.5f + 9 * b.Pull * b.Pull));
-        b.Pos += (Intake - b.Pos) * k;
+        b.Pos += (intake - b.Pos) * k;
         b.Agit = 1;
         b.Ang += b.AngV * dt;
         if (b.Pull >= 1) { b.Gone = true; b.Ingesting = false; }
@@ -900,7 +917,8 @@ public sealed partial class Sim
                 if (k >= 1)
                 {
                     it.Flight = Flight.None; it.InDock = true; it.Icon.Gone = true;
-                    BinCount--; BinBytes -= it.Entry.Bytes;
+                    if (!it.ViaRival) { BinCount--; BinBytes -= it.Entry.Bytes; }
+                    it.ViaRival = false;
                     BagFill = M.Clamp(BagFill + 1f / Math.Max(Items.Count, 1), 0, 1);
                     tickBudget += 0.45f;
                     if (tickBudget > 1) { tickBudget = 0; Audio?.Tick(); }

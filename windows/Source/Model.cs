@@ -9,6 +9,28 @@ public enum Source { Sample, Real }
 public enum Stage { Ready, Preparing, Running }
 public enum SupportCard { Hidden, Asking, Thanked }
 
+/// Kept on this PC only: what RoboDust has done so far, for the line on the panel.
+public sealed class Stats
+{
+    public int Runs { get; set; }
+    public int Items { get; set; }
+    public long Bytes { get; set; }
+    public double Meters { get; set; }
+    public Dictionary<string, int> Kinds { get; set; } = new();
+    public string FavouriteKind
+    {
+        get
+        {
+            string best = null; int n = 0;
+            foreach (var (k, c) in Kinds) if (c > n) { n = c; best = k; }
+            return best;
+        }
+    }
+}
+
+public enum Page { Main, Settings, Shelf }
+public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4 }
+
 public sealed class RunResult
 {
     public string Title, Detail;
@@ -25,6 +47,17 @@ public sealed class Settings
     public bool SkipFinalClick { get; set; }
     public bool ClearWindows { get; set; } = true;
     public bool SupportCardShown { get; set; }
+    // Einstellungen page.
+    public int Skin { get; set; }              // RobotSkin
+    public bool Hat { get; set; }
+    public bool RemoteControl { get; set; }    // arrow keys drive the robot
+    public int MinAgeDays { get; set; }        // rule: only things untouched this long
+    public List<string> NeverTouch { get; set; } = new();   // rule: paths RoboDust always leaves alone
+    public int Schedule { get; set; }          // 0 off, 1 daily, 2 weekly (Friday)
+    public int ScheduleHour { get; set; } = 17;
+    public bool Autostart { get; set; }
+    public bool Hotkey { get; set; }
+    public Stats Stats { get; set; } = new();
 
     public static bool Persists = true;
     static string FilePath => Path.Combine(FileOps.DataDir, "settings.json");
@@ -77,6 +110,12 @@ public sealed class Model
     public float RunTime;
     public Sim Sim;
     public List<Screen> Screens = new();
+    public Page Page = Page.Main;
+    /// Changes a setting and saves it.
+    public void Set(Action change) { change(); Settings.Save(); Changed(); }
+    public Action<bool> SetAutostart, SetHotkey;
+    public Action<int> SetSchedule;
+    public Action<string> NeverTouch;
 
     public Action Start, TogglePause, Stop, PutBack, About, Undo, DismissResult, UndoLast, OpenShelf, Quit;
     public Action<CleanMode> Choose;

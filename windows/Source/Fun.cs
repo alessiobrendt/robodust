@@ -5,7 +5,7 @@ namespace RoboDust;
 
 /// Spaßmodus: gadgets bolted onto the robot. Purely a picture: nothing here touches a file, and a
 /// "burnt" icon is back to normal the moment it lands where it was.
-public enum FunMode { Off = 0, Flames = 1, Bubbles = 2, Confetti = 3, Disco = 4, All = 5 }
+public enum FunMode { Off = 0, Flames = 1, Bubbles = 2, Confetti = 3, Disco = 4, All = 5, Laser = 6, Tornado = 7, Plow = 8, Race = 9 }
 
 public sealed partial class Sim
 {
@@ -25,12 +25,17 @@ public sealed partial class Sim
 
     void UpdateFun(float dt)
     {
+        UpdateManual();
         if (Fun == FunMode.Off || Paused) { FlameLevel = 0; return; }
         popBudget = MathF.Min(4, popBudget + dt * 7);
         var working = Phase is Phase.Cleaning or Phase.Hunting && !Picked;
         if (HasFlames) UpdateFlames(dt, working);
         if (HasBubbles && (working || Phase is Phase.Scanning or Phase.Returning)) UpdateBubbles(dt);
         if (HasDisco) UpdateDisco(dt);
+        if (HasLaser) UpdateLaser(dt, working); else LaserTarget = null;
+        if (HasTornado) UpdateTornado(dt, working);
+        if (HasPlow) UpdatePlow(dt);
+        if (Fun == FunMode.Race) UpdateRace(dt);
     }
 
     // MARK: Flamethrower
@@ -87,7 +92,9 @@ public sealed partial class Sim
     /// and the robot vacuums up the ash.
     void Take(Item it, bool icon)
     {
-        if (!HasFlames) { StartIngest(it, icon); return; }
+        // The snowplow pushes things rather than taking them in, until it is time to vacuum the heap.
+        if (Plowing) { if (icon && !it.Carried) Capture(it, (it.Icon.Pos - Pos).Dot(Side), 0); return; }
+        if (!HasFlames && !HasLaser) { StartIngest(it, icon); return; }
         if (icon) StartBurn(it); else StartLabelBurn(it);
     }
 
@@ -98,7 +105,7 @@ public sealed partial class Sim
     {
         get
         {
-            if (!HasFlames) return false;
+            if (!HasFlames && !HasLaser) return false;
             foreach (var it in Items) if (it.Burning && (it.Icon.Pos - Intake).Len < R * 1.6f) return true;
             return false;
         }
@@ -108,6 +115,8 @@ public sealed partial class Sim
     {
         if (it.Burning || it.Icon.Ingesting || it.Protected || it.Icon.Gone) return;
         it.Burning = true;
+        it.BurnStyle = HasLaser && !HasFlames ? 1 : 0;
+        if (it.BurnStyle == 1) return;   // the laser does its own thing
         it.Scorch = 1;
         // The flamethrower gives it a proper blast.
         if (Phase is Phase.Cleaning or Phase.Hunting && !Picked) flameT = MathF.Max(flameT, 0.6f);
@@ -122,26 +131,37 @@ public sealed partial class Sim
 
     void UpdateBurn(Item it, float dt)
     {
+        var laser = it.BurnStyle == 1;
         // Big files take a little longer to go.
-        it.Burn = MathF.Min(1, it.Burn + dt / (0.55f + 0.08f * (it.Mass - 1)));
-        it.Scorch = 1;
+        it.Burn = MathF.Min(1, it.Burn + dt / ((laser ? 0.45f : 0.55f) + 0.08f * (it.Mass - 1)));
+        if (!laser) it.Scorch = 1;
         it.Icon.Vel *= MathF.Exp(-dt * 6);
         it.Icon.Pos += it.Icon.Vel * dt;
         it.Icon.Agit = 0.18f;
         var half = Metrics.IconHalf;
-        // Embers fly off the burning edge, flakes of ash drop where it stood.
-        if (Rand() < dt * 45)
-            SpawnFun(PartKind.Glow, it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), new V2(Rand(-30, 30), Rand(-70, -20)), Rand(0.35f, 0.8f), Rand(1.2f, 2.6f), 1, Rand(0.35f, 0.6f), 0.08f, 1);
-        if (Rand() < dt * 30) Ash(it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), 1);
-        if (Rand() < dt * 8) SpawnFun(PartKind.Smoke, it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), new V2(Rand(-15, 15), Rand(-35, -10)), Rand(1, 1.8f), Rand(8, 13), 0.2f, 0.19f, 0.18f, 0.45f);
+        var c = it.Color;
+        if (laser)
+        {
+            // Falls apart into its own coloured pixels.
+            if (Rand() < dt * 60) Pixels(it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), 1, c);
+            if (Rand() < dt * 30) SpawnFun(PartKind.Glow, it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), new V2(Rand(-40, 40), Rand(-40, 40)), Rand(0.2f, 0.4f), Rand(1, 2), 0.5f, 0.95f, 1, 1);
+        }
+        else
+        {
+            // Embers fly off the burning edge, flakes of ash drop where it stood.
+            if (Rand() < dt * 45)
+                SpawnFun(PartKind.Glow, it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), new V2(Rand(-30, 30), Rand(-70, -20)), Rand(0.35f, 0.8f), Rand(1.2f, 2.6f), 1, Rand(0.35f, 0.6f), 0.08f, 1);
+            if (Rand() < dt * 30) Ash(it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), 1);
+            if (Rand() < dt * 8) SpawnFun(PartKind.Smoke, it.Icon.Pos + new V2(Rand(-half, half), Rand(-half, half)), new V2(Rand(-15, 15), Rand(-35, -10)), Rand(1, 1.8f), Rand(8, 13), 0.2f, 0.19f, 0.18f, 0.45f);
+        }
         if (it.Burn < 1) return;
-        // Gone: what's left is a little heap of ash for the robot to pick up.
+        // Gone: what's left is a little heap of ash (or pixels) for the robot to pick up.
         it.Burning = false;
         it.Icon.Gone = true;
         if (it.LabelAttached) it.Label.Gone = true;
         it.InBin = true; BinCount++; BinBytes += it.Entry.Bytes;
         Collected++; CollectedBytes += it.Entry.Bytes;
-        Ash(it.Icon.Pos, 18 + (int)(it.Mass * 4));
+        if (laser) Pixels(it.Icon.Pos, 22 + (int)(it.Mass * 4), c); else Ash(it.Icon.Pos, 18 + (int)(it.Mass * 4));
     }
 
     void UpdateLabelBurn(Item it, float dt)
@@ -163,6 +183,16 @@ public sealed partial class Sim
         {
             var g = Rand(0.16f, 0.36f);
             SpawnFun(PartKind.Ash, at + new V2(Rand(-14, 14), Rand(-14, 14)), new V2(Rand(-60, 60), Rand(-60, 60)), Rand(7, 11), Rand(2.2f, 4.5f), g, g * 0.97f, g * 0.94f, 0.95f, chip: 1);
+        }
+    }
+
+    /// Square pixels in the colours of what the laser took apart. Vacuumed up like ash.
+    void Pixels(V2 at, int n, V3 c)
+    {
+        for (int k = 0; k < n; k++)
+        {
+            var j = Rand(0.7f, 1.3f);
+            SpawnFun(PartKind.Ash, at + new V2(Rand(-14, 14), Rand(-14, 14)), new V2(Rand(-90, 90), Rand(-90, 90)), Rand(7, 11), Rand(2.5f, 4), M.Clamp(c.X * j, 0, 1), M.Clamp(c.Y * j, 0, 1), M.Clamp(c.Z * j, 0, 1), 1, chip: 1.2f);
         }
     }
 
@@ -197,6 +227,12 @@ public sealed partial class Sim
     }
 
     void FunDone()
+    {
+        if (Fun == FunMode.Race) RaceDone();
+        FunDoneConfetti();
+    }
+
+    void FunDoneConfetti()
     {
         if (!HasConfetti) return;
         // The dock's cannon: a big one, straight up the screen.
@@ -281,6 +317,29 @@ public sealed partial class Sim
                 q.Vel *= MathF.Exp(-dt * 2.8f);
                 q.Ang += dt * (6 + q.Seed % 6);
                 break;
+            case PartKind.Swirl:
+            {
+                // Orbits the robot, drifting inwards.
+                var d = q.Pos - Pos;
+                q.Vel = d.Unit.Perp * 430 - d.Unit * 50;
+                break;
+            }
+            case PartKind.Snow:
+            {
+                // Lies where it fell. The plow blade pushes it along, and the robot leaves a track through it.
+                var rel = q.Pos - Pos;
+                float f = rel.Dot(Fwd), s = rel.Dot(Side);
+                if (Plowing && f > R * 0.6f && f < R * 1.4f && MathF.Abs(s) < R * 1.05f) q.Pos += Fwd * (MathF.Max(V, 0) * dt) + Side * (MathF.Sign(s) * MathF.Abs(V) * 0.15f * dt);
+                else if (rel.Len < R) q.Pos = Pos + rel.Unit * R;
+                if (SuctionOn && !Picked)
+                {
+                    var d = Intake - q.Pos; var l = d.Len;
+                    if (l < R * 2.2f) q.Vel += d.Unit * (2400 * (1 - l / (R * 2.2f))) * dt;
+                    if (l < R * 0.45f) q.Life = 0;
+                }
+                q.Vel *= MathF.Exp(-dt * 4);
+                break;
+            }
             case PartKind.Ash:
             {
                 // Lies where it fell until the suction gets near, then goes in like any other dust.
