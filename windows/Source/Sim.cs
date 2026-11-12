@@ -919,7 +919,7 @@ public sealed class Sim
         var slotsNeeded = grouped.Count + protectedSpots.Count;
         var cols = (slotsNeeded + rows - 1) / rows;
         // A very full desktop tightens the columns so that everything stays on screen.
-        var pitch = MathF.Min(colPitchWanted, (Size.X - 120) / Math.Max(cols - 1, 1));
+        var pitch = MathF.Min(colPitchWanted, (WallMax.X - WallMin.X - 120) / Math.Max(cols - 1, 1));
         var slots = new List<(Item, V2)>();
         int slot = 0;
         foreach (var it in grouped)

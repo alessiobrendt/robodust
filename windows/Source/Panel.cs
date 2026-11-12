@@ -87,7 +87,7 @@ public sealed class Panel : Window
         var m = model;
         return string.Join("|", m.Stage, m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied or Phase.PuttingBack or Phase.Leaving or Phase.Finished ? m.Phase.ToString() : "live",
             m.Paused, m.Note, m.Outcome, m.Mode, m.Source, m.ReviewOpen, m.Result?.Title, m.Result?.Detail, m.Applying, m.Support, m.SkipFinalClick, m.ClearWindows,
-            m.LastRun?.Id, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
+            m.LastRun?.Id, m.DockScreen, m.SortBy, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
     }
 
     public void Refresh()
@@ -365,6 +365,18 @@ public sealed class Panel : Window
             after.Add(sw);
         }
         body.Children.Add(Field("Danach", after.ToArray()));
+        // With several displays: which one the dock stands on, which is where the robot starts and empties.
+        var displays = Screen.All();
+        if (displays.Count > 1)
+        {
+            Floorplan.Layout(displays);
+            var ordered = displays.OrderBy(d => d.WorldOrigin.X).ThenBy(d => d.WorldOrigin.Y).ToList();
+            var options = ordered.Select((d, i) => (d.Name, d.IsPrimary ? $"{i + 1} · Haupt" : $"Monitor {i + 1}")).ToList();
+            var current = displays.Any(d => d.Name == m.DockScreen) ? m.DockScreen : displays.First(d => d.IsPrimary).Name;
+            var dockText = Text("Dort startet der Roboter, und dorthin fährt er zum Entleeren.");
+            dockText.Margin = new Thickness(0, 7, 0, 0);
+            body.Children.Add(Field("Station steht auf", Segmented(options, current, v => { m.DockScreen = v; m.Changed(); }), dockText));
+        }
         body.Children.Add(Switch("Fenster minimieren, damit ich zuschauen kann", m.ClearWindows, v => { m.ClearWindows = v; m.Changed(); }));
         if (m.Note != null) { var n = Text(m.Note, 12, new SolidColorBrush(Orange)); n.Margin = new Thickness(0, 0, 0, 12); body.Children.Add(n); }
         var start = Btn("Saugen starten", Kind.Primary, () => m.Start());

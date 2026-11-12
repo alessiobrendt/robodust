@@ -20,6 +20,7 @@ public sealed class Settings
 {
     public int Mode { get; set; } = (int)CleanMode.Move;
     public int SortBy { get; set; }
+    public string DockScreen { get; set; }   // device name of the display the dock stands on; null for the main one
     public bool SkipFinalClick { get; set; }
     public bool ClearWindows { get; set; } = true;
     public bool SupportCardShown { get; set; }
@@ -47,6 +48,7 @@ public sealed class Model
     public Source Source = Source.Sample;
     public CleanMode Mode { get => (CleanMode)Settings.Mode; set { Settings.Mode = (int)value; Settings.Save(); } }
     public SortBy SortBy { get => (SortBy)Settings.SortBy; set { Settings.SortBy = (int)value; Settings.Save(); } }
+    public string DockScreen { get => Settings.DockScreen; set { Settings.DockScreen = value; Settings.Save(); } }
     public bool SkipFinalClick { get => Settings.SkipFinalClick; set { Settings.SkipFinalClick = value; Settings.Save(); } }
     public bool ClearWindows { get => Settings.ClearWindows; set { Settings.ClearWindows = value; Settings.Save(); } }
     public CleanMode? Outcome;

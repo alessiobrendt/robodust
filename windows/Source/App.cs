@@ -153,7 +153,8 @@ public sealed class AppController
             // Entries with no file behind them (the sample mess) can never reach FileOps.
             var real = entries.Any(e => e.Path != null);
             m.RealRun = real;
-            var plan = Floorplan.Of(screens);
+            // The dock stands on the display the user picked, the main one unless they said otherwise.
+            var plan = Floorplan.Of(screens, screens.FindIndex(x => x.Name == m.Settings.DockScreen));
             var s = new Sim(plan, entries);
             for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
             s.Mode = m.Mode;

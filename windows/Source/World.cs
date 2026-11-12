@@ -210,6 +210,8 @@ public sealed class Floorplan
         foreach (var s in screens) s.WorldOrigin -= shift;
     }
 
-    public static Floorplan Of(List<Screen> screens) =>
-        new(screens.Select(s => new RectF(s.WorldOrigin.X, s.WorldOrigin.Y, s.SizePts.X, s.SizePts.Y)).ToList(), Math.Max(0, screens.FindIndex(s => s.IsPrimary)));
+    /// dock: index of the display the dock stands on; the primary display if not given.
+    public static Floorplan Of(List<Screen> screens, int dock = -1) =>
+        new(screens.Select(s => new RectF(s.WorldOrigin.X, s.WorldOrigin.Y, s.SizePts.X, s.SizePts.Y)).ToList(),
+            dock >= 0 && dock < screens.Count ? dock : Math.Max(0, screens.FindIndex(s => s.IsPrimary)));
 }

@@ -14,12 +14,12 @@ namespace RoboDust;
 public static unsafe class Offline
 {
     /// allScreens: the sample mess spread over every display, drawn as one picture of the whole floor.
-    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow, bool allScreens = false)
+    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow, bool allScreens = false, int dock = -1)
     {
         Directory.CreateDirectory(outDir);
         var screens = allScreens ? Screen.All() : new List<Screen> { Screen.Primary() };
         Floorplan.Layout(screens);
-        var plan = Floorplan.Of(screens);
+        var plan = Floorplan.Of(screens, dock);
         var size = new V2(plan.Bounds.W, plan.Bounds.H);
         Sprites.TexScale = MathF.Max(2, pixelScale);
         using var host = new Form { ShowInTaskbar = false, FormBorderStyle = FormBorderStyle.None, Size = new System.Drawing.Size(64, 64) };
