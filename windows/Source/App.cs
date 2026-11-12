@@ -350,6 +350,7 @@ public sealed class AppController
         var s = sim; var m = Model;
         if (s == null) return;
         m.Status = s.Status;
+        if (s.DuelLine is { } duel) m.Status = s.Phase >= Phase.Done ? (s.DuelWins > 0 && s.DuelWins >= s.DuelLosses ? "RoboDust gewinnt das Duell! " : "Duell vorbei. ") + duel : $"{s.Status} · {duel}";
         if (s.RaceLine is { } race) m.Status = s.Phase >= Phase.Done ? $"Sieger: {s.Winner}! ({race})" : $"{s.Status} · {race}";
         foreach (var o in overlays) o.KeepAboveDesktop();   // after Win+D
         if (m.Phase != s.Phase) FileOps.Trace($"phase {s.Phase} t={s.T:0.0} collected={s.Collected}/{s.Items.Count} room={s.Plan.RoomOf(s.Pos)}");

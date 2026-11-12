@@ -1,4 +1,4 @@
-namespace RoboDust;
+﻿namespace RoboDust;
 
 /// The Mac's Metal shaders, translated to GLSL 3.30 line by line. Same maths, same look.
 public static class Shaders
@@ -794,5 +794,131 @@ void main() {
     vec3 col = color * mix(0.55, 1.15, t) + vec3(0.25) * smoothstep(0.8, 1.0, t);
     col *= 1.0 - 0.35 * smoothstep(-6.0, 0.0, d);
     o = vec4(col * a * alpha, a * alpha);
+}";
+
+    // ---------- duel: weapons, armour and spikes, in the robot's own frame (x forward, units of its radius) ----------
+    public const string WeaponVS = Head + @"
+uniform vec2 center; uniform float radius; uniform float angle;
+out vec2 q;
+void main() {
+    vec2 k = kQuad[gl_VertexID] * radius * 1.8; float c = cos(angle), s = sin(angle);
+    gl_Position = toClip(center + vec2(c*k.x - s*k.y, s*k.x + c*k.y));
+    q = k / radius;
+}";
+    public const string WeaponFS = Head + @"
+in vec2 q; out vec4 o;
+uniform int kind; uniform int layer; uniform int armor; uniform int spikes;
+uniform float spin; uniform float swing; uniform float alpha; uniform float radius;
+float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
+float sdSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+vec4 over(vec4 c, vec3 col, float a) { a = clamp(a, 0.0, 1.0); return vec4(col * a + c.rgb * (1.0 - a), a + c.a * (1.0 - a)); }
+float fill(float d) { float aa = 1.2 / radius; return 1.0 - smoothstep(-aa, aa, d); }
+vec3 steel(float t) { return mix(vec3(.30, .32, .36), vec3(.90, .92, .96), clamp(t, 0.0, 1.0)); }
+void main() {
+    vec4 c = vec4(0.0);
+    vec2 p = q;
+    float r = length(p);
+    float ang = atan(p.y, p.x);
+    if (layer == 0) {
+        if (spikes == 1) {
+            // Fourteen steel spikes round the rim, lit from the top-left.
+            float f = abs(fract(ang / 6.28318 * 18.0) - 0.5) * 2.0;
+            float len = 1.0 - (r - 0.97) / 0.19;
+            float d = max(f - len * 0.75, max(0.97 - r, r - 1.16)) * 0.2;
+            c = over(c, steel(0.35 + 0.6 * len * (0.6 + 0.4 * (-p.x - p.y) / r)), fill(d));
+        }
+        if (armor == 1) {
+            // A ring of riveted plates sticking out past the shell.
+            float d = abs(r - 1.02) - 0.08;
+            float plate = fract(ang / 6.28318 * 12.0);
+            float seam = smoothstep(0.035, 0.0, min(plate, 1.0 - plate));
+            vec3 col = vec3(.34, .36, .40) * (0.8 + 0.35 * (-p.x - p.y) / max(r, .01)) * (1.0 - 0.5 * seam);
+            vec2 rv = vec2(r - 1.02, (plate - 0.5) * 6.28318 / 12.0 * r);
+            col = mix(col, vec3(.85), fill(length(rv) - 0.025) * 0.8);
+            c = over(c, col, fill(d));
+        }
+        if (kind == 5) {
+            // Wedge: a steel ramp in front, brightest at its edge.
+            float hw = 0.95 - (p.x - 0.5) * 0.15;
+            float d = max(abs(p.y) - hw, max(0.5 - p.x, p.x - 1.36));
+            float t = (p.x - 0.5) / 0.86;
+            vec3 col = steel(0.3 + 0.6 * t) * (1.0 - 0.6 * smoothstep(1.30, 1.36, p.x) * 0.0);
+            col = mix(col, vec3(.98), smoothstep(1.31, 1.35, p.x) * 0.7);
+            c = over(c, col, fill(d));
+        }
+        if (kind == 3) {
+            // Flipper: a hazard-striped plate that lifts towards the camera when it fires.
+            float ext = 1.34 + 0.22 * swing;
+            float hw = 0.64 + 0.08 * swing;
+            float d = max(abs(p.y) - hw, max(0.48 - p.x, p.x - ext));
+            float st = step(0.5, fract((p.x + p.y) * 3.2));
+            vec3 col = mix(vec3(.98, .78, .10), vec3(.10), st * 0.9) * (0.72 + 0.4 * swing + 0.25 * (p.x - 0.5));
+            col *= 1.0 - 0.55 * smoothstep(0.02, 0.0, abs(p.x - 0.9));
+            c = over(c, col, fill(d));
+        }
+        if (kind == 1) {
+            // Circular saw on an arm, poking out of the front.
+            c = over(c, vec3(.16, .16, .18), fill(sdBox(p - vec2(0.82, 0.0), vec2(0.28, 0.08))));
+            vec2 v = p - vec2(1.1, 0.0);
+            float rv = length(v);
+            float a = atan(v.y, v.x) - spin;
+            float edge = 0.44 + 0.07 * fract(a / 6.28318 * 18.0);
+            vec3 col = steel(0.55 + 0.3 * cos(atan(v.y, v.x) * 2.0 + 0.8) - 0.15 * smoothstep(0.3, 0.44, rv));
+            col *= 0.9 + 0.1 * sin(rv * 60.0);
+            c = over(c, col, fill(rv - edge));
+            c = over(c, vec3(.08), fill(rv - 0.11));
+            c = over(c, vec3(.7), fill(length(v - vec2(-0.03, -0.03)) - 0.035));
+        }
+    } else {
+        if (kind == 2) {
+            // Hammer on a pivot behind the lid: folded back at rest, slammed down in front when it strikes.
+            float phi = mix(2.25, 0.0, swing);   // at rest it lies back over the lid
+            float h = sin(phi);
+            float s = 1.0 + 0.45 * h;
+            vec2 piv = vec2(-0.15, 0.0);
+            vec2 head = vec2(piv.x + 1.2 * cos(phi), 0.0);
+            c = over(c, vec3(.12), fill(sdBox(p - piv, vec2(0.13, 0.16))));
+            float dh = sdSeg(p, piv, head) - 0.07 * s;
+            c = over(c, vec3(.55, .36, .20) * (0.85 + 0.3 * h), fill(dh));
+            float db = sdBox(p - head, vec2(0.17, 0.36) * s);
+            vec3 col = steel(0.4 + 0.35 * h + 0.25 * (-(p.y - head.y) / (0.36 * s)));
+            c = over(c, col, fill(db));
+        }
+        if (kind == 4) {
+            // Spinner bar across the lid; at speed it blurs into a disc.
+            float cs = cos(spin), sn = sin(spin);
+            vec2 v = vec2(cs * p.x + sn * p.y, -sn * p.x + cs * p.y);
+            c = over(c, vec3(.75, .77, .82), 0.22 * fill(r - 1.3));
+            float taper = 0.13 - 0.04 * abs(v.x) / 1.3;
+            float d = sdBox(v, vec2(1.3, taper));
+            c = over(c, steel(0.5 + 0.4 * v.x / 1.3), fill(d));
+            c = over(c, vec3(.1), fill(r - 0.2));
+            c = over(c, vec3(.75), fill(length(p - vec2(-0.04, -0.04)) - 0.06));
+        }
+    }
+    if (c.a <= 0.002) discard;
+    o = c * alpha;
+}";
+
+    // ---------- duel: health bars ----------
+    public const string BarVS = Head + @"
+uniform vec2 center; uniform vec2 half_;
+out vec2 q;
+void main() { q = kQuad[gl_VertexID] * (half_ + 2.0); gl_Position = toClip(center + q); }";
+    public const string BarFS = Head + @"
+in vec2 q; out vec4 o;
+uniform vec2 half_; uniform float fill; uniform vec3 color; uniform float alpha;
+float sdBox(vec2 p, vec2 b, float r) { vec2 d = abs(p) - b + r; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r; }
+void main() {
+    float d = sdBox(q, half_, half_.y);
+    float a = 1.0 - smoothstep(-0.7, 0.7, d);
+    if (a <= 0.0) discard;
+    vec3 col = vec3(.06, .06, .07); float al = 0.75;
+    float inner = 1.0 - smoothstep(-0.7, 0.7, sdBox(q, half_ - 1.5, half_.y - 1.5));
+    float f = step(q.x, -half_.x + 2.0 * half_.x * fill) * inner;
+    col = mix(col, color * (0.8 + 0.4 * smoothstep(half_.y, -half_.y, q.y)), f); al = mix(al, 1.0, f);
+    float edge = smoothstep(-1.4, -0.3, d);
+    col = mix(col, vec3(.96), edge * 0.55); al = max(al, edge * 0.7);
+    o = vec4(col * al, al) * a * alpha;
 }";
 }

@@ -46,7 +46,7 @@ public sealed unsafe class ShopPreview : IDisposable
             fbo = Gl.Gen(Gl.GenFramebuffers);
             Gl.BindFramebuffer(Gl.FRAMEBUFFER, fbo);
             Gl.FramebufferTexture2D(Gl.FRAMEBUFFER, Gl.COLOR_ATTACHMENT0, Gl.TEXTURE_2D, tex, 0);
-            sim = new Sim(Size, V2.Zero, Size, new List<DesktopEntry>()) { DockDrop = 1, DockAlpha = 0 };
+            sim = new Sim(Size, V2.Zero, Size, new List<DesktopEntry>()) { DockDrop = 1, DockAlpha = 0, Showcase = true };
             bmp = new WriteableBitmap(W, H, 192, 192, PixelFormats.Bgra32, null);
         }
         catch { r = null; }

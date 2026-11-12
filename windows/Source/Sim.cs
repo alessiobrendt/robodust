@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -558,6 +558,7 @@ public sealed partial class Sim
 
     void FollowPath(float dt)
     {
+        if (DuelHold(dt)) return;
         if (ManualActive) { DriveManual(dt); return; }
         if (PathI >= path.Count) { DriveRaw(0, 0, dt); return; }
         if (Cat?.Fighting == true) { DriveRaw(0, 0, dt); return; }

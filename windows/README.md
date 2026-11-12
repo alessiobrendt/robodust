@@ -73,7 +73,7 @@ In den Einstellungen gibt es einen Spaßmodus: einen Flammenwerfer, der alles im
 Hinter dem Knopf „Einstellungen“ findest du:
 
 - **Station steht auf**: auf welchem Monitor der Roboter startet und entleert.
-- **Spaßmodus**: Feuer, Blasen, Konfetti, Disco, Laser (zerlegt alles in Pixel), Tornado, Schnee (der Schneepflug schiebt erst alles zu einem Haufen), Rennen (zwei Rivalen saugen um die Wette) oder alles auf einmal. Dazu **Fernsteuerung**: Mit den Pfeiltasten fährst du selbst, solange RoboDust im Vordergrund ist.
+- **Spaßmodus**: Feuer, Blasen, Konfetti, Disco, Laser (zerlegt alles in Pixel), Tornado, Schnee (der Schneepflug schiebt erst alles zu einem Haufen), Rennen (zwei Rivalen saugen um die Wette), Duell (Roboterkampf, siehe unten) oder alles auf einmal. Dazu **Fernsteuerung**: Mit den Pfeiltasten fährst du selbst, solange RoboDust im Vordergrund ist.
 - **Eichhörnchen-Bande** (im Spaßmodus): Fünf Eichhörnchen schnappen sich Dateien wie Nüsse, vergraben sie und vergessen, wo. RoboDust gräbt alles wieder aus. Dazu gibt es den Roboter im Eichhörnchen-Look mit Ohren.
 - **Katze**: Eine von sechs Katzen kommt vorbei. Sie beaufsichtigt, schläft auf dem Roboter, fährt mit, kämpft, schubst Dateien weg oder versteckt sich unter deinen Fenstern. Du kannst sie hochheben.
 - **Aussehen**: Weiß, Schwarz, Gold, Retro oder Pink, mit oder ohne Partyhut.
@@ -85,7 +85,9 @@ Auf der Startseite steht, was RoboDust bisher geschafft hat, und „Ablage“ ze
 
 ## Shop
 
-Für jede aufgeräumte Datei gibt es eine Münze, und beim Aufräumen liegen Münzen auf dem Desktop (fünf pro Stück), die der Roboter mit einsaugt. Im **Shop** gibt es dafür 19 Skins (von Carbon und Chrom über Zebra, Holz und Marmor bis Lava, Eis und Galaxie), 12 Hüte (vom Partyhut bis zum Heiligenschein), Tuning (Heckspoiler, Rennstreifen, Flammen-Lackierung, Unterboden in vier Farben, Auspuff-Flammen, Spuren aus Rauch, Glitzer oder Regenbogen, Blaulicht und Hupen) und 8 Haustiere, die hinter dem Roboter herlaufen (Dackel, Golden Retriever, Kater, Eichhörnchen, Fuchs, Hase, Pinguin, Entenküken). Oben im Shop dreht sich der Roboter in einer Live-Vorschau; ein Klick auf ein Teil probiert es an, ohne es zu kaufen.
+Für jede aufgeräumte Datei gibt es eine Münze, und beim Aufräumen liegen Münzen auf dem Desktop (fünf pro Stück), die der Roboter mit einsaugt. Im **Shop** gibt es dafür 19 Skins (von Carbon und Chrom über Zebra, Holz und Marmor bis Lava, Eis und Galaxie), 12 Hüte (vom Partyhut bis zum Heiligenschein), Tuning (Heckspoiler, Rennstreifen, Flammen-Lackierung, Unterboden in vier Farben, Auspuff-Flammen, Spuren aus Rauch, Glitzer oder Regenbogen, Blaulicht und Hupen) und 8 Haustiere, die hinter dem Roboter herlaufen (Dackel, Golden Retriever, Kater, Eichhörnchen, Fuchs, Hase, Pinguin, Entenküken). Unter **Kampf** gibt es Teile für das Duell: Rammkeil (gratis), Kreissäge, Hammer, Flipper, Drehklinge, Panzerung und Stacheln. Oben im Shop dreht sich der Roboter in einer Live-Vorschau; ein Klick auf ein Teil probiert es an, ohne es zu kaufen.
+
+Im Spaßmodus **Duell** greift ein Herausforderer nach dem anderen an (Krawall mit Säge, Brecher mit Hammer, Kipper mit Flipper, Wirbel mit Drehklinge, Igel mit Stacheln). Beide haben eine Lebensleiste, RoboDust wehrt sich mit seinen Kampfteilen, und jeder K.o. bringt 3 Münzen. Wer zweimal gewinnt, zieht ab; aufgeräumt wird trotzdem ganz normal.
 
 Münzen geben (oder mit Minus nehmen), auch während RoboDust läuft:
 

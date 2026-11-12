@@ -1,11 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
 namespace RoboDust;
 
 public enum PetKind { None = 0, Dachshund = 1, Golden = 2, Cat = 3, Squirrel = 4, Fox = 5, Bunny = 6, Penguin = 7, Duck = 8 }
-public enum ShopCategory { Skins, Hats, Tuning, Pets }
+public enum ShopCategory { Skins, Hats, Tuning, Pets, Battle }
 
 /// Everything the robot is wearing: what the renderer draws and the preview shows.
 public struct Look
@@ -19,12 +19,14 @@ public struct Look
     public int Trail;        // 0 none, 1 rainbow, 2 smoke, 3 glitter
     public bool Lightbar;
     public int Horn;         // 0 beep, 1 fanfare, 2 cucaracha, 3 train
+    public int Weapon;       // 0 none, 1 saw, 2 hammer, 3 flipper, 4 spinner, 5 wedge
+    public bool Armor, Spikes;
 
     public static Look Of(Settings s) => new()
     {
         Skin = (RobotSkin)s.Skin, Hat = s.HatKind != 0 ? s.HatKind : (s.Hat ? 1 : 0),
         Spoiler = s.Spoiler, Glow = s.Glow, Exhaust = s.Exhaust, Decal = s.Decal, Pet = (PetKind)s.Pet,
-        GlowColor = s.GlowColor, Trail = s.Trail, Lightbar = s.Lightbar, Horn = s.Horn,
+        GlowColor = s.GlowColor, Trail = s.Trail, Lightbar = s.Lightbar, Horn = s.Horn, Weapon = s.Weapon, Armor = s.Armor, Spikes = s.Spikes,
     };
 }
 
@@ -130,6 +132,25 @@ public static class Shop
         Pet(PetKind.Bunny, "Hase", "🐰", 280, "Hoppelt mit langen Ohren.");
         Pet(PetKind.Fox, "Fuchs", "🦊", 380, "Schlau, mit weißer Schwanzspitze.");
         Pet(PetKind.Penguin, "Pinguin", "🐧", 420, "Watschelt im Frack.");
+
+        // Fighting parts for the duel. One weapon at a time; armour and spikes go with any of them.
+        void Fight(string id, string name, string emoji, int price, string blurb, Func<Look, Look> wear, Func<Look, bool> worn, Func<Look, Look> off) => list.Add(new ShopItem
+        {
+            Id = "fight:" + id, Name = name, Emoji = emoji, Price = price, Blurb = blurb, Category = ShopCategory.Battle, Wear = wear, Worn = worn, TakeOff = off,
+        });
+        foreach (var (w, name, emoji, price, blurb) in new[]
+        {
+            (5, "Rammkeil", "🔺", 0, "Ein Stahlkeil vorne. Schiebt Gegner weg und hebelt sie kurz aus."),
+            (1, "Kreissäge", "🪚", 200, "Sägt Funken aus jedem, der ihm vor den Stoßfänger kommt."),
+            (2, "Hammer", "🔨", 260, "Holt aus und haut drauf. Wer getroffen wird, ist kurz benommen."),
+            (3, "Flipper", "🤸", 300, "Eine Klappe, die Gegner durch die Luft schleudert."),
+            (4, "Drehklinge", "🌀", 420, "Eine Stahlklinge auf dem Deckel, die alles wegschleudert, was ihr zu nahe kommt."),
+        })
+            Fight("weapon" + w, name, emoji, price, blurb, l => { l.Weapon = w; return l; }, l => l.Weapon == w, l => { l.Weapon = 0; return l; });
+        Fight("armor", "Panzerung", "🛡", 180, "Genietete Stahlplatten rundum. Halbiert fast jeden Treffer.",
+            l => { l.Armor = true; return l; }, l => l.Armor, l => { l.Armor = false; return l; });
+        Fight("spikes", "Stacheln", "🦔", 150, "Stahlstacheln rundum. Wer ihn rammt, tut sich selbst weh.",
+            l => { l.Spikes = true; return l; }, l => l.Spikes, l => { l.Spikes = false; return l; });
         return list;
     }
 
@@ -153,6 +174,6 @@ public static class Shop
     {
         s.Skin = (int)l.Skin; s.HatKind = l.Hat; s.Hat = l.Hat == 1;
         s.Spoiler = l.Spoiler; s.Glow = l.Glow; s.Exhaust = l.Exhaust; s.Decal = l.Decal; s.Pet = (int)l.Pet;
-        s.GlowColor = l.GlowColor; s.Trail = l.Trail; s.Lightbar = l.Lightbar; s.Horn = l.Horn;
+        s.GlowColor = l.GlowColor; s.Trail = l.Trail; s.Lightbar = l.Lightbar; s.Horn = l.Horn; s.Weapon = l.Weapon; s.Armor = l.Armor; s.Spikes = l.Spikes;
     }
 }

@@ -44,7 +44,7 @@ public sealed partial class Sim
     }
 
     /// What this run earns in the shop: one coin per file RoboDust itself took, five per coin picked up.
-    public int CoinsEarned => Math.Max(0, OwnScore) + CoinsPicked * 5;
+    public int CoinsEarned => Math.Max(0, OwnScore) + CoinsPicked * 5 + DuelWins * 3;
 
     void UpdateExtras(float dt)
     {

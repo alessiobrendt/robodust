@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -71,6 +71,9 @@ public sealed class Settings
     public int Trail { get; set; }             // 0 none, 1 rainbow, 2 smoke, 3 glitter
     public bool Lightbar { get; set; }
     public int Horn { get; set; }              // 0 beep, 1 fanfare, 2 cucaracha, 3 train
+    public int Weapon { get; set; }            // 0 none, 1 saw, 2 hammer, 3 flipper, 4 spinner, 5 wedge
+    public bool Armor { get; set; }
+    public bool Spikes { get; set; }
     public Stats Stats { get; set; } = new();
 
     public static bool Persists = true;

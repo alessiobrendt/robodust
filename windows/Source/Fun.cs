@@ -1,11 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace RoboDust;
 
 /// Spaßmodus: gadgets bolted onto the robot. Purely a picture: nothing here touches a file, and a
 /// "burnt" icon is back to normal the moment it lands where it was.
-public enum FunMode { Off = 0, Flames = 1, Bubbles = 2, Confetti = 3, Disco = 4, All = 5, Laser = 6, Tornado = 7, Plow = 8, Race = 9, Squirrels = 10 }
+public enum FunMode { Off = 0, Flames = 1, Bubbles = 2, Confetti = 3, Disco = 4, All = 5, Laser = 6, Tornado = 7, Plow = 8, Race = 9, Squirrels = 10, Duel = 11 }
 
 public sealed partial class Sim
 {
@@ -36,6 +36,7 @@ public sealed partial class Sim
         if (HasTornado) UpdateTornado(dt, working);
         if (HasPlow) UpdatePlow(dt);
         if (Fun == FunMode.Race) UpdateRace(dt);
+        if (Fun == FunMode.Duel) UpdateDuel(dt);
         if (HasSquirrels) UpdateSquirrels(dt);
     }
 
@@ -236,6 +237,7 @@ public sealed partial class Sim
     void FunDone()
     {
         if (Fun == FunMode.Race) RaceDone();
+        if (Fun == FunMode.Duel) DuelDone();
         FunDoneConfetti();
     }
 

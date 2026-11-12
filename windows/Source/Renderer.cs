@@ -24,7 +24,7 @@ public sealed unsafe class Renderer
     }
 
     public readonly V2 SizePts;
-    readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade;
+    readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade, pWeapon, pBar;
     public RobotSkin Skin;
     public Look Look;          // hats, tuning and pet from the shop; Skin and Hat are kept in step
     float botTime;
@@ -59,6 +59,8 @@ public sealed unsafe class Renderer
         pStamp = new Prog(Shaders.StampVS, Shaders.StampFS);
         pFade = new Prog(Shaders.FadeVS, Shaders.FadeFS);
         pBlade = new Prog(Shaders.BladeVS, Shaders.BladeFS);
+        pWeapon = new Prog(Shaders.WeaponVS, Shaders.WeaponFS);
+        pBar = new Prog(Shaders.BarVS, Shaders.BarFS);
 
         emptyVao = Gl.Gen(Gl.GenVertexArrays);
 
@@ -511,7 +513,7 @@ public sealed unsafe class Renderer
     struct BotPose
     {
         public V2 Pos, Shake, BrushL, BrushR;
-        public float Heading, R, Scale, Alpha, Height, BrushAngle, BrushSpeed, Lidar, Bumper, LedPulse;
+        public float Heading, R, Scale, Alpha, Height, BrushAngle, BrushSpeed, Lidar, Bumper, LedPulse, Spin, Swing;
         public V3 Led;
         public RobotSkin Skin;
         public Look Look;
@@ -529,7 +531,7 @@ public sealed unsafe class Renderer
         var drop = sim.DockDrop;
         var bounce = 1 - MathF.Pow(1 - drop, 3);
         var dropScale = 1 + (1 - bounce) * 0.55f;
-        var liftK = sim.Lift;
+        var liftK = MathF.Max(sim.Lift, sim.Me?.LiftK ?? 0);
         var scale = dropScale * (1 + liftK * 0.13f);
         var shakeP = new V2(MathF.Sin(sim.T * 83), MathF.Cos(sim.T * 71)) * sim.Shake * 2.6f;
         if (sim.Picked) shakeP = new V2(MathF.Sin(sim.T * 19), MathF.Cos(sim.T * 15)) * 1.2f;
@@ -544,6 +546,18 @@ public sealed unsafe class Renderer
                 Pos = rv.Pos, Heading = rv.Heading, R = rv.R * dropScale, Scale = dropScale, Alpha = alpha, Height = 1 - bounce,
                 BrushL = rl, BrushR = rr, BrushAngle = rv.BrushAngle, BrushSpeed = rv.BrushSpeed, Lidar = rv.LidarAngle, LedPulse = rv.LedPulse,
                 Led = rv.Led, Skin = rv.Skin, Look = new Look { Skin = rv.Skin },
+            });
+        }
+        // The duel's challenger: drops in, gets flipped, and spins out when it's beaten.
+        if (sim.Foe is { Alpha: > 0 } f)
+        {
+            var (fl, fr) = f.BrushCenters;
+            var fs = dropScale * (1 + f.LiftK * 0.25f);
+            DrawBot(new BotPose
+            {
+                Pos = f.Pos, Heading = f.Heading, R = f.R * fs, Scale = fs, Alpha = alpha * M.Clamp(f.Alpha, 0, 1), Height = f.LiftK * 0.9f,
+                BrushL = fl, BrushR = fr, BrushAngle = f.BrushAngle, BrushSpeed = f.BrushSpeed, Lidar = f.LidarAngle, LedPulse = f.LedPulse, Bumper = f.Flash,
+                Led = f.Down ? new V3(1, 0.12f, 0.1f) : f.Led, Skin = f.Look.Skin, Look = f.Look, Spin = f.Spin, Swing = f.Swing,
             });
         }
         // The snowplow's blade sits in front, under the bumper.
@@ -561,8 +575,45 @@ public sealed unsafe class Renderer
         {
             Pos = sim.Pos, Heading = sim.Heading, R = sim.R * scale, Scale = scale, Alpha = alpha, Height = (1 - bounce) + liftK * 0.9f, Shake = shakeP,
             BrushL = l, BrushR = r, BrushAngle = sim.BrushAngle, BrushSpeed = sim.BrushSpeed, Lidar = sim.LidarAngle, Bumper = sim.Bumper, LedPulse = sim.LedPulse,
-            Led = sim.Led, Skin = Look.Skin, Hat = Look.Hat == 1, Look = Look,
+            Led = sim.Me is { Down: true } ? new V3(1, 0.12f, 0.1f) : sim.Led, Skin = Look.Skin, Hat = Look.Hat == 1, Look = sim.Me?.Look ?? Look,
+            // Saw and spinner turn with the brushes; in the shop the hammer and flipper show what they do.
+            Spin = sim.Me?.Spin ?? sim.BrushAngle * 1.1f,
+            Swing = sim.Me?.Swing ?? (sim.Showcase ? MathF.Pow(MathF.Max(0, MathF.Sin(sim.T * 2.2f)), 3) : 0),
         });
+        if (sim.Me != null)
+        {
+            HealthBar(sim.Pos, sim.R, sim.Me.Hp, alpha);
+            if (sim.Foe is { Alpha: > 0 } f2) HealthBar(f2.Pos, f2.R, f2.Hp, alpha * M.Clamp(f2.Alpha, 0, 1));
+        }
+    }
+
+    /// Above the robot, or below it when it's at the top of the screen.
+    void HealthBar(V2 pos, float r, float hp, float alpha)
+    {
+        var c = pos + new V2(0, -(r * 1.28f + 10));
+        if (c.Y - Origin.Y < 14) c = pos + new V2(0, r * 1.28f + 10);
+        hp = M.Clamp(hp, 0, 1);
+        var col = hp > 0.5f ? new V3(1 - (hp - 0.5f) * 2 * 0.7f, 0.9f, 0.25f) : new V3(1, 0.25f + hp * 1.3f, 0.2f);
+        pBar.Use(SizePts, Origin);
+        Gl.BindVertexArray(emptyVao);
+        pBar.F2("center", c); pBar.F2("half_", r * 0.7f, 5); pBar.F("fill", hp); pBar.F("alpha", alpha);
+        unsafe { var v = stackalloc float[3] { col.X, col.Y, col.Z }; Gl.Uniform3fv(pBar["color"], 1, v); }
+        Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+    }
+
+    /// Fighting parts: layer 0 sits under the shell (saw, wedge, flipper, armour, spikes), layer 1 on the lid (hammer, spinner).
+    void Weapon(BotPose b, int layer)
+    {
+        var lk = b.Look;
+        var under = lk.Armor || lk.Spikes || lk.Weapon is 1 or 3 or 5;
+        var over = lk.Weapon is 2 or 4;
+        if (layer == 0 ? !under : !over) return;
+        pWeapon.Use(SizePts, Origin);
+        Gl.BindVertexArray(emptyVao);
+        pWeapon.F2("center", b.Pos + b.Shake); pWeapon.F("radius", b.R); pWeapon.F("angle", b.Heading);
+        pWeapon.I("kind", lk.Weapon); pWeapon.I("layer", layer); pWeapon.I("armor", lk.Armor ? 1 : 0); pWeapon.I("spikes", lk.Spikes ? 1 : 0);
+        pWeapon.F("spin", b.Spin); pWeapon.F("swing", b.Swing); pWeapon.F("alpha", b.Alpha);
+        Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
     }
 
     void DrawBot(BotPose b)
@@ -581,6 +632,7 @@ public sealed unsafe class Renderer
             pBrush.F("speed", b.BrushSpeed); pBrush.F("alpha", alpha); pBrush.F("sign_", i == 0 ? 1 : -1);
             Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
         }
+        Weapon(b, 0);
         var sk = SkinOf(b.Skin);
         pRobot.Use(SizePts, Origin);
         pRobot.F2("center", pos); pRobot.F("radius", R); pRobot.F2("shake", b.Shake);
@@ -614,6 +666,7 @@ public sealed unsafe class Renderer
         pRobot.F("quadScale", lk.Spoiler ? 1.34f : lk.Glow ? 1.32f : 1.03f);
         Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, logoTex); pRobot.I("logo", 0);
         Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+        Weapon(b, 1);
     }
 
     void StampTrack(Sim sim, float dt)

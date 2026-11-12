@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -423,7 +423,7 @@ public sealed class Panel : Window
     static string FunName(FunMode f) => f switch
     {
         FunMode.Flames => "🔥 Feuer", FunMode.Bubbles => "🧼 Blasen", FunMode.Confetti => "🎉 Konfetti", FunMode.Disco => "🕺 Disco",
-        FunMode.Laser => "Laser", FunMode.Tornado => "🌪 Tornado", FunMode.Plow => "❄ Schneepflug", FunMode.Race => "🏁 Wettrennen", FunMode.Squirrels => "🐿 Eichhörnchen-Bande",
+        FunMode.Laser => "Laser", FunMode.Tornado => "🌪 Tornado", FunMode.Plow => "❄ Schneepflug", FunMode.Race => "🏁 Wettrennen", FunMode.Squirrels => "🐿 Eichhörnchen-Bande", FunMode.Duel => "⚔ Duell",
         FunMode.All => "Alles!", _ => "Aus",
     };
 
@@ -454,7 +454,7 @@ public sealed class Panel : Window
             Segmented(new List<(FunMode, string)> {
                 (FunMode.Off, "Aus"), (FunMode.Flames, "🔥 Feuer"), (FunMode.Bubbles, "🧼 Blasen"),
                 (FunMode.Confetti, "🎉 Konfetti"), (FunMode.Disco, "🕺 Disco"), (FunMode.Laser, "⚡ Laser"),
-                (FunMode.Tornado, "🌪 Tornado"), (FunMode.Plow, "❄ Schnee"), (FunMode.Race, "🏁 Rennen"), (FunMode.Squirrels, "🐿 Eichhörnchen"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }, 3),
+                (FunMode.Tornado, "🌪 Tornado"), (FunMode.Plow, "❄ Schnee"), (FunMode.Race, "🏁 Rennen"), (FunMode.Squirrels, "🐿 Eichhörnchen"), (FunMode.Duel, "⚔ Duell"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }, 3),
             funText, remote));
         var catText = Text("Eine von sechs Katzen kommt zu Besuch: Sie beaufsichtigt, schläft auf dem Roboter, fährt mit, kämpft, schubst Dateien weg oder versteckt sich. Du kannst sie hochheben.");
         catText.Margin = new Thickness(0, 2, 0, 0);
@@ -502,7 +502,9 @@ public sealed class Panel : Window
     Image previewImage;
     readonly System.Diagnostics.Stopwatch previewClock = System.Diagnostics.Stopwatch.StartNew();
     double previewLast;
-    ShopCategory shopCat = ShopCategory.Skins;
+    /// Dev only: which shop tab a panel opens on, for the review shots.
+    internal static ShopCategory FirstShopCategory = ShopCategory.Skins;
+    ShopCategory shopCat = FirstShopCategory;
     ShopItem tryItem;
 
     void StopPreview() { previewTimer?.Stop(); previewImage = null; }
@@ -554,7 +556,7 @@ public sealed class Panel : Window
             body.Children.Add(action);
         }
 
-        var cats = Segmented(new List<(ShopCategory, string)> { (ShopCategory.Skins, "Skins"), (ShopCategory.Hats, "Hüte"), (ShopCategory.Tuning, "Tuning"), (ShopCategory.Pets, "Haustiere") },
+        var cats = Segmented(new List<(ShopCategory, string)> { (ShopCategory.Skins, "Skins"), (ShopCategory.Hats, "Hüte"), (ShopCategory.Tuning, "Tuning"), (ShopCategory.Pets, "Haustiere"), (ShopCategory.Battle, "⚔ Kampf") },
             shopCat, v => { shopCat = v; tryItem = null; Redraw(); });
         ((FrameworkElement)cats).Margin = new Thickness(0, 14, 0, 10);
         body.Children.Add(cats);
@@ -688,6 +690,7 @@ public sealed class Panel : Window
         FunMode.Plow => "Es schneit. Mit dem Schneepflug schiebt er erst alles zu einem großen Haufen und saugt dann Haufen und Schnee weg.",
         FunMode.Race => "Zwei Rivalen fahren mit und saugen um die Wette. Am Ende gibt es eine Siegerehrung.",
         FunMode.Squirrels => "Die Eichhörnchen-Bande kommt vorbei: Sie schnappen sich Dateien wie Nüsse, vergraben sie und vergessen, wo. RoboDust gräbt alles wieder aus. Wir sind viele. Wir sind flauschig.",
+        FunMode.Duel => "Roboterkampf! Ein Herausforderer nach dem anderen greift RoboDust an, und RoboDust wehrt sich mit den Kampfteilen aus dem Shop. Für jeden K.o. gibt es 3 Münzen. Aufgeräumt wird trotzdem ganz normal.",
         FunMode.All => "Flammenwerfer, Seifenblasen, Konfetti und Disco auf einmal. Nur zum Anschauen, deinen Dateien passiert nichts.",
         _ => "Der Roboter saugt ganz normal.",
     };
@@ -979,6 +982,8 @@ public static class PanelShot
         One(g, System.IO.Path.Combine(dir, "panel_settings.png"));
         var sh = M(); sh.Page = Page.Shop; sh.Settings.Coins = 420; sh.Settings.HatKind = 2; sh.Settings.Spoiler = true; sh.Settings.Glow = true; sh.Settings.Decal = 2; sh.Settings.Skin = 7; sh.Settings.Pet = 7; sh.Settings.Exhaust = true; sh.Settings.Lightbar = true; sh.Settings.HatKind = 7; sh.Settings.Skin = 16;
         One(sh, System.IO.Path.Combine(dir, "panel_shop.png"));
+        var sb = M(); sb.Page = Page.Shop; sb.Settings.Coins = 900; sb.Settings.Weapon = 2; sb.Settings.Armor = true; sb.Settings.Skin = 6;
+        Panel.FirstShopCategory = ShopCategory.Battle; One(sb, System.IO.Path.Combine(dir, "panel_shop_battle.png")); Panel.FirstShopCategory = ShopCategory.Skins;
         var h = M(); h.Settings.Stats = new Stats { Runs = 12, Items = 312, Bytes = 14_200_000_000, Meters = 1234, Kinds = new() { ["Bilder"] = 120, ["Dokumente"] = 80 } };
         One(h, System.IO.Path.Combine(dir, "panel_stats.png"));
     }
