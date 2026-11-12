@@ -63,6 +63,7 @@ public sealed class Item
     public int TakenBy = -1; // fun mode race: the rival pulling it in, or -1 for RoboDust
     public bool ViaRival;    // in the bin because a rival got it
     public bool Carried;     // fun mode snowplow: riding on the blade
+    public bool HeldBySquirrel, Buried;   // fun mode squirrels: in a squirrel's mouth, or buried under a little heap
     public V2 CarryOff;
 
     public Item(int index, DesktopEntry entry)
@@ -299,7 +300,7 @@ public sealed partial class Sim
             }
             case Phase.Cleaning:
                 ScanActive = MathF.Max(0, ScanActive - dt * 2);
-                Status = Cat?.Note(this) ?? (Heavy > 0.35f ? "Große Datei. Puh…" : "Saugt");
+                Status = Cat?.Note(this) ?? SquirrelNote ?? (Heavy > 0.35f ? "Große Datei. Puh…" : "Saugt");
                 FollowPath(dt);
                 if (BinCount >= BinCapacity && Remaining > 0) { GoDock(true); break; }
                 if (PathI >= path.Count)
@@ -308,7 +309,7 @@ public sealed partial class Sim
                 }
                 break;
             case Phase.Hunting:
-                Status = Cat?.Note(this) ?? "Sammelt die Nachzügler ein";
+                Status = Cat?.Note(this) ?? SquirrelNote ?? "Sammelt die Nachzügler ein";
                 if (BinCount >= BinCapacity && Remaining > 0) { GoDock(true); break; }
                 if (huntTarget == null || huntTarget.Icon.Gone || huntTarget.Icon.Ingesting)
                 {
@@ -756,6 +757,7 @@ public sealed partial class Sim
             if (!it.Icon.Gone)
             {
                 if (it.Grabbed) it.Icon.Agit = MathF.Max(it.Icon.Agit, 0.25f);
+                else if (it.HeldBySquirrel) it.Icon.Agit = 0.1f;
                 else if (it.Burning) UpdateBurn(it, dt);
                 else if (it.Icon.Ingesting)
                 {
@@ -943,7 +945,7 @@ public sealed partial class Sim
                     it.Flight = Flight.None; it.InDock = false; it.InBin = false;
                     it.Icon.Pos = it.FlightTo; it.Icon.Ang = 0; it.Icon.Vel = V2.Zero; it.Icon.Gone = false; it.Icon.Agit = 0; it.Icon.AngV = 0;
                     it.LabelAttached = true; it.Label.Gone = false; it.Label.Ingesting = false; it.Label.Pull = 0; it.LabelLost = 0;
-                    it.FlightScale = 1; it.Land = 1; it.Scorch = 0; it.Burn = 0; it.LabelBurn = 0; it.Burning = false; it.LabelBurning = false;   // back home, as good as new
+                    it.FlightScale = 1; it.Land = 1; it.Scorch = 0; it.Burn = 0; it.LabelBurn = 0; it.Burning = false; it.LabelBurning = false; it.Buried = false; it.HeldBySquirrel = false;   // back home, as good as new
                     it.Rest = it.FlightTo;
                     tickBudget += 0.35f;
                     if (tickBudget > 1) { tickBudget = 0; Audio?.Tick(); }

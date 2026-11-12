@@ -223,7 +223,7 @@ void main() {
 in vec2 p; out vec4 o;
 uniform float radius; uniform float heading; uniform float lidar; uniform float bumper; uniform float ledPulse;
 uniform vec4 led; uniform float alpha;
-uniform vec3 bodyCol; uniform vec3 plateCol; uniform float bodyGloss; uniform float bodyMetal; uniform float hat;   // skins
+uniform vec3 bodyCol; uniform vec3 plateCol; uniform float bodyGloss; uniform float bodyMetal; uniform float hat; uniform float ears;   // skins
 uniform sampler2D logo;
 
 float robotHeight(vec2 l, out int mat, out float ao) {
@@ -353,6 +353,26 @@ void main() {
                 Mat pm; pm.albedo = vec3(1.0, 0.92, 0.55); pm.gloss = 0.1; pm.metal = 0.0; pm.emis = 0.0; pm.emisColor = vec3(0.0);
                 vec3 np = normalize(vec3(dw * (hr / 0.085) * 0.9, 1.0));
                 col = mix(col, shade(np, pm, 1.0), pom);
+            }
+        }
+    }
+    // The squirrel look: two pointed ears with dark tufts, at the front of the shell.
+    if (ears > 0.5) {
+        for (int k = -1; k <= 1; k += 2) {
+            vec2 ep = l - vec2(0.50, float(k) * 0.40);
+            float ea = float(k) * 0.55;
+            vec2 er = vec2(cos(ea) * ep.x + sin(ea) * ep.y, -sin(ea) * ep.x + cos(ea) * ep.y);
+            float d = length(vec2(er.x / 0.15, er.y / 0.085));
+            if (d < 1.0) {
+                vec2 dl = er / max(length(er), 1e-3);
+                float cw3 = cos(heading), sw3 = sin(heading);
+                vec2 dw = vec2(cw3*dl.x - sw3*dl.y, sw3*dl.x + cw3*dl.y);
+                Mat em; em.albedo = mix(vec3(0.82, 0.42, 0.16), vec3(0.92, 0.62, 0.52), smoothstep(0.75, 0.3, d) * 0.7);
+                em.gloss = 0.15; em.metal = 0.0; em.emis = 0.0; em.emisColor = vec3(0.0);
+                col = shade(normalize(vec3(dw * d * 0.8, 1.0)), em, 1.0);
+                col = mix(col, vec3(0.14, 0.07, 0.03), smoothstep(0.08, 0.13, er.x) * 0.9);   // the tuft
+            } else {
+                col *= 1.0 - 0.3 * smoothstep(1.35, 1.0, d);   // a soft shadow round the ear
             }
         }
     }

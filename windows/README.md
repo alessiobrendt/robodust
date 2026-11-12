@@ -74,6 +74,7 @@ Hinter dem Knopf „Einstellungen“ findest du:
 
 - **Station steht auf**: auf welchem Monitor der Roboter startet und entleert.
 - **Spaßmodus**: Feuer, Blasen, Konfetti, Disco, Laser (zerlegt alles in Pixel), Tornado, Schnee (der Schneepflug schiebt erst alles zu einem Haufen), Rennen (zwei Rivalen saugen um die Wette) oder alles auf einmal. Dazu **Fernsteuerung**: Mit den Pfeiltasten fährst du selbst, solange RoboDust im Vordergrund ist.
+- **Eichhörnchen-Bande** (im Spaßmodus): Fünf Eichhörnchen schnappen sich Dateien wie Nüsse, vergraben sie und vergessen, wo. RoboDust gräbt alles wieder aus. Dazu gibt es den Roboter im Eichhörnchen-Look mit Ohren.
 - **Katze**: Eine von sechs Katzen kommt vorbei. Sie beaufsichtigt, schläft auf dem Roboter, fährt mit, kämpft, schubst Dateien weg oder versteckt sich unter deinen Fenstern. Du kannst sie hochheben.
 - **Aussehen**: Weiß, Schwarz, Gold, Retro oder Pink, mit oder ohne Partyhut.
 - **Regeln**: nur aufräumen, was seit 1, 7 oder 30 Tagen unverändert ist. Mit Rechtsklick in „Elemente prüfen“ merkst du dir eine Datei als „nie anfassen“.

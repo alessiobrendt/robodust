@@ -418,7 +418,7 @@ public sealed class Panel : Window
     static string FunName(FunMode f) => f switch
     {
         FunMode.Flames => "🔥 Feuer", FunMode.Bubbles => "🧼 Blasen", FunMode.Confetti => "🎉 Konfetti", FunMode.Disco => "🕺 Disco",
-        FunMode.Laser => "Laser", FunMode.Tornado => "🌪 Tornado", FunMode.Plow => "❄ Schneepflug", FunMode.Race => "🏁 Wettrennen",
+        FunMode.Laser => "Laser", FunMode.Tornado => "🌪 Tornado", FunMode.Plow => "❄ Schneepflug", FunMode.Race => "🏁 Wettrennen", FunMode.Squirrels => "🐿 Eichhörnchen-Bande",
         FunMode.All => "Alles!", _ => "Aus",
     };
 
@@ -449,7 +449,7 @@ public sealed class Panel : Window
             Segmented(new List<(FunMode, string)> {
                 (FunMode.Off, "Aus"), (FunMode.Flames, "🔥 Feuer"), (FunMode.Bubbles, "🧼 Blasen"),
                 (FunMode.Confetti, "🎉 Konfetti"), (FunMode.Disco, "🕺 Disco"), (FunMode.Laser, "⚡ Laser"),
-                (FunMode.Tornado, "🌪 Tornado"), (FunMode.Plow, "❄ Schnee"), (FunMode.Race, "🏁 Rennen"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }, 3),
+                (FunMode.Tornado, "🌪 Tornado"), (FunMode.Plow, "❄ Schnee"), (FunMode.Race, "🏁 Rennen"), (FunMode.Squirrels, "🐿 Eichhörnchen"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }, 3),
             funText, remote));
         var catText = Text("Eine von sechs Katzen kommt zu Besuch: Sie beaufsichtigt, schläft auf dem Roboter, fährt mit, kämpft, schubst Dateien weg oder versteckt sich. Du kannst sie hochheben.");
         catText.Margin = new Thickness(0, 2, 0, 0);
@@ -457,7 +457,7 @@ public sealed class Panel : Window
         var hat = Switch("Mit Partyhut", s.Hat, v => m.Set(() => s.Hat = v));
         ((FrameworkElement)hat).Margin = new Thickness(0, 10, 0, 0);
         body.Children.Add(Field("Aussehen",
-            Segmented(new List<(RobotSkin, string)> { (RobotSkin.White, "Weiß"), (RobotSkin.Black, "Schwarz"), (RobotSkin.Gold, "Gold"), (RobotSkin.Retro, "Retro"), (RobotSkin.Pink, "Pink") }, (RobotSkin)s.Skin, v => m.Set(() => s.Skin = (int)v)),
+            Segmented(new List<(RobotSkin, string)> { (RobotSkin.White, "Weiß"), (RobotSkin.Black, "Schwarz"), (RobotSkin.Gold, "Gold"), (RobotSkin.Retro, "Retro"), (RobotSkin.Pink, "Pink"), (RobotSkin.Squirrel, "🐿 Eichhörnchen") }, (RobotSkin)s.Skin, v => m.Set(() => s.Skin = (int)v)),
             hat));
         var ruleText = Text(s.NeverTouch.Count == 0
             ? "Rechtsklick auf eine Datei in „Elemente prüfen“ merkt sie dir als „nie anfassen“."
@@ -548,6 +548,7 @@ public sealed class Panel : Window
         FunMode.Tornado => "Ein Tornado um den Roboter wirbelt alles in seiner Nähe herum, bevor es im Sog verschwindet.",
         FunMode.Plow => "Es schneit. Mit dem Schneepflug schiebt er erst alles zu einem großen Haufen und saugt dann Haufen und Schnee weg.",
         FunMode.Race => "Zwei Rivalen fahren mit und saugen um die Wette. Am Ende gibt es eine Siegerehrung.",
+        FunMode.Squirrels => "Die Eichhörnchen-Bande kommt vorbei: Sie schnappen sich Dateien wie Nüsse, vergraben sie und vergessen, wo. RoboDust gräbt alles wieder aus. Wir sind viele. Wir sind flauschig.",
         FunMode.All => "Flammenwerfer, Seifenblasen, Konfetti und Disco auf einmal. Nur zum Anschauen, deinen Dateien passiert nichts.",
         _ => "Der Roboter saugt ganz normal.",
     };

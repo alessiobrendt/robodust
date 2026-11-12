@@ -27,6 +27,7 @@ public sealed unsafe class Renderer
     readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade;
     public RobotSkin Skin;
     readonly CatRenderer catR;
+    int squirrelBase;
     public bool Hat;
     readonly uint emptyVao, spriteVao, partVao, gridBuf, instBuf, partBuf;
     readonly int gridCount;
@@ -166,7 +167,11 @@ public sealed unsafe class Renderer
 
     public void SetSprites(List<Sprite> s)
     {
-        iconTex = ArrayTexture(s.ConvertAll(x => x.Icon), Sprites.IconTex, Sprites.IconTex);
+        // The squirrels' frames ride along after the items in the same texture.
+        var icons = s.ConvertAll(x => x.Icon);
+        squirrelBase = icons.Count;
+        icons.AddRange(SquirrelArt.Frames());
+        iconTex = ArrayTexture(icons, Sprites.IconTex, Sprites.IconTex);
         labelTex = ArrayTexture(s.ConvertAll(x => x.Label), Sprites.LabelW, Sprites.LabelH);
     }
 
@@ -211,6 +216,18 @@ public sealed unsafe class Renderer
             var flying = it.Flight != Flight.None && it.FlightDelay <= 0;
             if (it.Flight != Flight.None && it.FlightDelay > 0 && it.Flight != Flight.ToBag && it.InDock) return;
             if (it.InBin || (it.InDock && !flying)) return;
+            if (it.Buried && !flying)
+            {
+                // Under a little heap of earth. Its label is buried with it.
+                ground.Add(new Inst { Center = it.Icon.Pos, Half = new V2(Metrics.IconHalf, Metrics.IconHalf) * 1.05f, Intake = intake + new V2(0, 100000), Scale = 1, Alpha = 1, Slice = squirrelBase + SquirrelArt.Mound });
+                return;
+            }
+            if (it.HeldBySquirrel && !flying)
+            {
+                // In a squirrel's mouth: small, and without its label.
+                top.Add(new Inst { Center = it.Icon.Pos, Half = new V2(Metrics.IconHalf, Metrics.IconHalf), Intake = intake + new V2(0, 100000), Angle = it.Icon.Ang, Scale = 0.5f, Alpha = 1, Slice = it.Index, ShadowOffset = new V2(3, 5), ShadowAlpha = 0.25f });
+                return;
+            }
             var far = intake + new V2(0, 100000);
             if (!it.Icon.Gone || flying)
             {
@@ -261,6 +278,16 @@ public sealed unsafe class Renderer
             }
         }
 
+        // The Eichhörnchen-Bande, on top of the files: they run over them.
+        foreach (var sq in sim.Squirrels)
+        {
+            if (sq.State == SqState.Gone) continue;
+            top.Add(new Inst
+            {
+                Center = sq.Pos, Half = new V2(42, 42), Intake = sq.Pos + new V2(0, 100000), Angle = sq.Heading + M.Pi / 2, Scale = 1, Alpha = 1,
+                Slice = squirrelBase + sq.Frame, ShadowOffset = new V2(3, 5), ShadowAlpha = 0.3f,
+            });
+        }
         Gl.BindFramebuffer(Gl.FRAMEBUFFER, targetFbo);
         Gl.Viewport(0, 0, pxW, pxH);
 
@@ -437,6 +464,7 @@ public sealed unsafe class Renderer
         RobotSkin.Gold => (new V3(0.95f, 0.74f, 0.32f), new V3(0.08f, 0.06f, 0.04f), 0.75f, 0.85f),
         RobotSkin.Retro => (new V3(0.86f, 0.80f, 0.66f), new V3(0.42f, 0.33f, 0.24f), 0.18f, 0),
         RobotSkin.Pink => (new V3(0.97f, 0.62f, 0.76f), new V3(0.12f, 0.06f, 0.09f), 0.35f, 0),
+        RobotSkin.Squirrel => (new V3(0.77f, 0.36f, 0.13f), new V3(0.26f, 0.13f, 0.05f), 0.22f, 0),
         _ => (new V3(0.90f, 0.90f, 0.88f), new V3(0.055f, 0.058f, 0.065f), 0.28f, 0),
     };
 
@@ -517,7 +545,7 @@ public sealed unsafe class Renderer
             var plate = stackalloc float[3] { sk.plate.X, sk.plate.Y, sk.plate.Z };
             Gl.Uniform3fv(pRobot["bodyCol"], 1, body); Gl.Uniform3fv(pRobot["plateCol"], 1, plate);
         }
-        pRobot.F("bodyGloss", sk.gloss); pRobot.F("bodyMetal", sk.metal); pRobot.F("hat", b.Hat ? 1 : 0);
+        pRobot.F("bodyGloss", sk.gloss); pRobot.F("bodyMetal", sk.metal); pRobot.F("hat", b.Hat ? 1 : 0); pRobot.F("ears", b.Skin == RobotSkin.Squirrel ? 1 : 0);
         Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, logoTex); pRobot.I("logo", 0);
         Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
     }

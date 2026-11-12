@@ -5,7 +5,7 @@ namespace RoboDust;
 
 /// Spaßmodus: gadgets bolted onto the robot. Purely a picture: nothing here touches a file, and a
 /// "burnt" icon is back to normal the moment it lands where it was.
-public enum FunMode { Off = 0, Flames = 1, Bubbles = 2, Confetti = 3, Disco = 4, All = 5, Laser = 6, Tornado = 7, Plow = 8, Race = 9 }
+public enum FunMode { Off = 0, Flames = 1, Bubbles = 2, Confetti = 3, Disco = 4, All = 5, Laser = 6, Tornado = 7, Plow = 8, Race = 9, Squirrels = 10 }
 
 public sealed partial class Sim
 {
@@ -36,6 +36,7 @@ public sealed partial class Sim
         if (HasTornado) UpdateTornado(dt, working);
         if (HasPlow) UpdatePlow(dt);
         if (Fun == FunMode.Race) UpdateRace(dt);
+        if (HasSquirrels) UpdateSquirrels(dt);
     }
 
     // MARK: Flamethrower
@@ -91,6 +92,12 @@ public sealed partial class Sim
     /// Taking something in. Normally it's swallowed; with the flamethrower on it burns to ash first,
     /// and the robot vacuums up the ash.
     void Take(Item it, bool icon)
+    {
+        if (it.Buried) Unbury(it);
+        TakeNow(it, icon);
+    }
+
+    void TakeNow(Item it, bool icon)
     {
         // The snowplow pushes things rather than taking them in, until it is time to vacuum the heap.
         if (Plowing) { if (icon && !it.Carried) Capture(it, (it.Icon.Pos - Pos).Dot(Side), 0); return; }

@@ -29,7 +29,7 @@ public sealed class Stats
 }
 
 public enum Page { Main, Settings, Shelf }
-public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4 }
+public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4, Squirrel = 5 }
 
 public sealed class RunResult
 {
