@@ -6,3 +6,6 @@ site/
 .claude/
 site-draft/
 marketing/
+windows/bin/
+windows/obj/
+windows/dist/

@@ -1,0 +1,432 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
+
+namespace RoboDust;
+
+/// Draws a frame of the sim. Same passes, order and parameters as the Mac renderer.
+public sealed unsafe class Renderer
+{
+    sealed class Prog
+    {
+        public uint Id;
+        readonly Dictionary<string, int> locs = new();
+        public Prog(string vs, string fs) { Id = Gl.Program(vs, fs); }
+        public int this[string n] { get { if (!locs.TryGetValue(n, out var l)) { l = Gl.Loc(Id, n); locs[n] = l; } return l; } }
+        public void Use(V2 viewport) { Gl.UseProgram(Id); Gl.Uniform2f(this["viewport"], viewport.X, viewport.Y); }
+        public void F(string n, float v) => Gl.Uniform1f(this[n], v);
+        public void F2(string n, V2 v) => Gl.Uniform2f(this[n], v.X, v.Y);
+        public void F2(string n, float x, float y) => Gl.Uniform2f(this[n], x, y);
+        public void F4(string n, float x, float y, float z, float w) => Gl.Uniform4f(this[n], x, y, z, w);
+        public void I(string n, int v) => Gl.Uniform1i(this[n], v);
+    }
+
+    public readonly V2 SizePts;
+    readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade;
+    readonly uint emptyVao, spriteVao, partVao, gridBuf, instBuf, partBuf;
+    readonly int gridCount;
+    uint wall, track, trackFbo, iconTex, labelTex, logoTex;
+    readonly int trackW, trackH;
+    float fadeAcc;
+    V2? lastStamp;
+    const int InstFloats = 20, PartFloats = 12;
+    float[] inst = new float[InstFloats * 4096];
+    readonly float[] parts = new float[PartFloats * 2600];
+
+    public Renderer(V2 sizePts)
+    {
+        SizePts = sizePts;
+        pBg = new Prog(Shaders.BgVS, Shaders.BgFS);
+        pSprite = new Prog(Shaders.SpriteVS, Shaders.SpriteFS);
+        pPart = new Prog(Shaders.PartVS, Shaders.PartFS);
+        pRobot = new Prog(Shaders.RobotVS, Shaders.RobotFS);
+        pBrush = new Prog(Shaders.BrushVS, Shaders.BrushFS);
+        pShadow = new Prog(Shaders.ShadowVS, Shaders.ShadowFS);
+        pDock = new Prog(Shaders.DockVS, Shaders.DockFS);
+        pLidar = new Prog(Shaders.LidarVS, Shaders.LidarFS);
+        pStamp = new Prog(Shaders.StampVS, Shaders.StampFS);
+        pFade = new Prog(Shaders.FadeVS, Shaders.FadeFS);
+
+        emptyVao = Gl.Gen(Gl.GenVertexArrays);
+
+        // 14x14 cell mesh per sprite: fine enough to bend smoothly into the intake.
+        const int n = 14;
+        var verts = new List<float>();
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++)
+        {
+            float ax = (float)i / n - 0.5f, ay = (float)j / n - 0.5f, s = 1f / n;
+            verts.AddRange(new[] { ax, ay, ax + s, ay, ax, ay + s, ax, ay + s, ax + s, ay, ax + s, ay + s });
+        }
+        gridCount = verts.Count / 2;
+        spriteVao = Gl.Gen(Gl.GenVertexArrays);
+        Gl.BindVertexArray(spriteVao);
+        gridBuf = Gl.Gen(Gl.GenBuffers);
+        Gl.BindBuffer(Gl.ARRAY_BUFFER, gridBuf);
+        var va = verts.ToArray();
+        fixed (float* p = va) Gl.BufferData(Gl.ARRAY_BUFFER, va.Length * 4, p, Gl.STATIC_DRAW);
+        Gl.VertexAttribPointer(0, 2, Gl.FLOAT, 0, 8, 0);
+        Gl.EnableVertexAttribArray(0);
+        instBuf = Gl.Gen(Gl.GenBuffers);
+        Gl.BindBuffer(Gl.ARRAY_BUFFER, instBuf);
+        Gl.BufferData(Gl.ARRAY_BUFFER, inst.Length * 4, null, Gl.STREAM_DRAW);
+        for (uint a = 0; a < 5; a++)
+        {
+            Gl.VertexAttribPointer(1 + a, 4, Gl.FLOAT, 0, InstFloats * 4, (nint)(a * 16));
+            Gl.EnableVertexAttribArray(1 + a);
+            Gl.VertexAttribDivisor(1 + a, 1);
+        }
+        partVao = Gl.Gen(Gl.GenVertexArrays);
+        Gl.BindVertexArray(partVao);
+        partBuf = Gl.Gen(Gl.GenBuffers);
+        Gl.BindBuffer(Gl.ARRAY_BUFFER, partBuf);
+        Gl.BufferData(Gl.ARRAY_BUFFER, parts.Length * 4, null, Gl.STREAM_DRAW);
+        for (uint a = 0; a < 3; a++)
+        {
+            Gl.VertexAttribPointer(a, 4, Gl.FLOAT, 0, PartFloats * 4, (nint)(a * 16));
+            Gl.EnableVertexAttribArray(a);
+            Gl.VertexAttribDivisor(a, 1);
+        }
+        Gl.BindVertexArray(0);
+
+        trackW = Math.Max(1, (int)sizePts.X); trackH = Math.Max(1, (int)sizePts.Y);
+        track = Texture2D(trackW, trackH, null, Gl.RGBA, false);
+        trackFbo = Gl.Gen(Gl.GenFramebuffers);
+        Gl.BindFramebuffer(Gl.FRAMEBUFFER, trackFbo);
+        Gl.FramebufferTexture2D(Gl.FRAMEBUFFER, Gl.COLOR_ATTACHMENT0, Gl.TEXTURE_2D, track, 0);
+        Gl.Viewport(0, 0, trackW, trackH);
+        Gl.ClearColor(0, 0.5f, 0, 0);
+        Gl.Clear(Gl.COLOR_BUFFER_BIT);
+        Gl.BindFramebuffer(Gl.FRAMEBUFFER, 0);
+        logoTex = MakeLogo();
+    }
+
+    static uint Texture2D(int w, int h, byte[] bgra, uint format, bool mip)
+    {
+        var t = Gl.Gen(Gl.GenTextures);
+        Gl.BindTexture(Gl.TEXTURE_2D, t);
+        Gl.PixelStorei(Gl.UNPACK_ALIGNMENT, 4);
+        if (bgra != null) fixed (byte* p = bgra) Gl.TexImage2D(Gl.TEXTURE_2D, 0, (int)Gl.RGBA8, w, h, 0, Gl.BGRA, Gl.UNSIGNED_BYTE, p);
+        else Gl.TexImage2D(Gl.TEXTURE_2D, 0, (int)Gl.RGBA8, w, h, 0, format, Gl.UNSIGNED_BYTE, null);
+        Gl.TexParameteri(Gl.TEXTURE_2D, Gl.TEXTURE_MIN_FILTER, (int)(mip ? Gl.LINEAR_MIPMAP_LINEAR : Gl.LINEAR));
+        Gl.TexParameteri(Gl.TEXTURE_2D, Gl.TEXTURE_MAG_FILTER, (int)Gl.LINEAR);
+        Gl.TexParameteri(Gl.TEXTURE_2D, Gl.TEXTURE_WRAP_S, (int)Gl.CLAMP_TO_EDGE);
+        Gl.TexParameteri(Gl.TEXTURE_2D, Gl.TEXTURE_WRAP_T, (int)Gl.CLAMP_TO_EDGE);
+        if (mip) Gl.GenerateMipmap(Gl.TEXTURE_2D);
+        return t;
+    }
+
+    uint MakeLogo()
+    {
+        const int w = 512, h = 180;
+        using var bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.TextRenderingHint = TextRenderingHint.AntiAlias;
+            using var f = new Font("Segoe UI Semibold", 92, FontStyle.Regular, GraphicsUnit.Pixel);
+            var sz = g.MeasureString("robodust", f);
+            g.DrawString("robodust", f, Brushes.White, (w - sz.Width) / 2, (h - sz.Height) / 2);
+        }
+        return Texture2D(w, h, Sprites.Pixels(bmp), Gl.BGRA, false);
+    }
+
+    public void SetWallpaper(Bitmap img)
+    {
+        if (wall != 0) { var t = wall; Gl.DeleteTextures(1, &t); }
+        wall = Texture2D(img.Width, img.Height, Sprites.Pixels(img), Gl.BGRA, false);
+    }
+
+    static uint ArrayTexture(List<byte[]> images, int w, int h)
+    {
+        var t = Gl.Gen(Gl.GenTextures);
+        Gl.BindTexture(Gl.TEXTURE_2D_ARRAY, t);
+        Gl.PixelStorei(Gl.UNPACK_ALIGNMENT, 4);
+        Gl.TexImage3D(Gl.TEXTURE_2D_ARRAY, 0, (int)Gl.RGBA8, w, h, Math.Max(images.Count, 1), 0, Gl.BGRA, Gl.UNSIGNED_BYTE, null);
+        for (int i = 0; i < images.Count; i++)
+            fixed (byte* p = images[i]) Gl.TexSubImage3D(Gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, w, h, 1, Gl.BGRA, Gl.UNSIGNED_BYTE, p);
+        Gl.TexParameteri(Gl.TEXTURE_2D_ARRAY, Gl.TEXTURE_MIN_FILTER, (int)Gl.LINEAR_MIPMAP_LINEAR);
+        Gl.TexParameteri(Gl.TEXTURE_2D_ARRAY, Gl.TEXTURE_MAG_FILTER, (int)Gl.LINEAR);
+        Gl.TexParameteri(Gl.TEXTURE_2D_ARRAY, Gl.TEXTURE_WRAP_S, (int)Gl.CLAMP_TO_EDGE);
+        Gl.TexParameteri(Gl.TEXTURE_2D_ARRAY, Gl.TEXTURE_WRAP_T, (int)Gl.CLAMP_TO_EDGE);
+        Gl.TexParameterf(Gl.TEXTURE_2D_ARRAY, Gl.TEXTURE_MAX_ANISOTROPY, 8);
+        Gl.GetError(); // anisotropy is optional
+        Gl.GenerateMipmap(Gl.TEXTURE_2D_ARRAY);
+        return t;
+    }
+
+    public void SetSprites(List<Sprite> s)
+    {
+        iconTex = ArrayTexture(s.ConvertAll(x => x.Icon), Sprites.IconTex, Sprites.IconTex);
+        labelTex = ArrayTexture(s.ConvertAll(x => x.Label), Sprites.LabelW, Sprites.LabelH);
+    }
+
+    struct Inst
+    {
+        public V2 Center, Half, Intake; public float Angle, Scale, Alpha, Slice, Pull, Agit;
+        public float TR, TG, TB, TA; public V2 ShadowOffset; public float ShadowAlpha;
+    }
+
+    // MARK: - Frame
+
+    /// Draws into the framebuffer currently bound, which is pxW by pxH pixels.
+    public void Encode(Sim sim, float dt, uint targetFbo, int pxW, int pxH)
+    {
+        Gl.Enable(Gl.BLEND);
+        Gl.BlendEquation(Gl.FUNC_ADD);
+        Gl.BlendFunc(Gl.ONE, Gl.ONE_MINUS_SRC_ALPHA);
+        StampTrack(sim, dt);
+
+        // Assemble sprite instances: labels first, then icons, things being eaten on top.
+        var ground = new List<Inst>(sim.Items.Count);
+        var groundLabels = new List<Inst>(sim.Items.Count);
+        var top = new List<Inst>(); var topLabels = new List<Inst>(); var late = new List<Inst>();
+        var intake = sim.Intake;
+        var iconHalf = new V2(Metrics.IconHalf, Metrics.IconHalf);
+        var labelHalf = Metrics.LabelHalf;
+        // Funnels in up close. From far away it shrinks and zips over, or it would smear across the screen.
+        var funnelReach = sim.R * 2.2f;
+        (float pull, float scale, bool near) Funnel(in Body b)
+        {
+            if (!b.Ingesting) return (0, 1, true);
+            var near = (intake - b.Pos).Len < funnelReach;
+            return near ? (b.Pull, 1, true) : (0, 1 - b.Pull * 0.55f, false);
+        }
+        foreach (var it in sim.Items)
+        {
+            var flying = it.Flight != Flight.None && it.FlightDelay <= 0;
+            if (it.Flight != Flight.None && it.FlightDelay > 0 && it.Flight != Flight.ToBag && it.InDock) continue;
+            if (it.InBin || (it.InDock && !flying)) continue;
+            var far = intake + new V2(0, 100000);
+            if (!it.Icon.Gone || flying)
+            {
+                var a = it.Icon.Agit;
+                var wob = flying ? 0 : a * 0.13f * MathF.Sin(sim.T * (17 + it.Icon.Seed % 7) + it.Icon.Seed);
+                var jitter = flying ? V2.Zero : new V2(MathF.Sin(sim.T * 33 + it.Icon.Seed), MathF.Cos(sim.T * 29 + it.Icon.Seed * 2)) * (a * a * 1.6f);
+                var squash = 1 + it.Land * 0.12f * MathF.Sin(it.Land * 6);
+                var f = Funnel(it.Icon);
+                var scale = (flying ? it.FlightScale : 1 + a * 0.05f) * squash * f.scale;
+                var lift = flying ? MathF.Sin(it.FlightT * M.Pi) : a;
+                var inst = new Inst
+                {
+                    Center = it.Icon.Pos + jitter, Half = iconHalf, Intake = flying ? far : intake, Angle = it.Icon.Ang + wob, Scale = scale,
+                    Alpha = 1, Slice = it.Index, Pull = f.pull, Agit = flying || !f.near ? 0 : a,
+                    ShadowOffset = new V2(2, 3) + new V2(5, 9) * lift, ShadowAlpha = 0.34f * MathF.Max(lift, 0),
+                };
+                if (it.Ping > 0) { inst.TR = 0.45f; inst.TG = 0.95f; inst.TB = 1; inst.TA = it.Ping * 0.55f; }
+                if (flying && it.Flight == Flight.ToBag) late.Add(inst);
+                else if (flying || it.Icon.Ingesting) top.Add(inst);
+                else ground.Add(inst);
+            }
+            // Label.
+            var labelVisible = !it.Label.Gone || flying;
+            if (labelVisible && it.Flight != Flight.ToBag)
+            {
+                var attached = it.LabelAttached;
+                var lpos = attached ? it.Icon.Pos + new V2(0, Metrics.LabelOffset * (flying ? it.FlightScale : 1)).Rotated(it.Icon.Ang) : it.Label.Pos;
+                var lang = attached ? it.Icon.Ang : it.Label.Ang;
+                var lf = attached ? (0f, 1f, true) : Funnel(it.Label);
+                var scale = (attached && flying ? it.FlightScale : 1) * lf.Item2;
+                var a = !lf.Item3 ? 0 : (attached ? it.Icon.Agit * 0.6f : it.Label.Agit);
+                var inst = new Inst
+                {
+                    Center = lpos, Half = labelHalf, Intake = flying ? far : intake, Angle = lang, Scale = scale, Alpha = 1, Slice = it.Index,
+                    Pull = lf.Item1, Agit = flying ? 0 : a,
+                };
+                if (it.Ping > 0) { inst.TR = 0.55f; inst.TG = 0.97f; inst.TB = 1; inst.TA = it.Ping * 0.7f; }
+                if (flying || it.Label.Ingesting) topLabels.Add(inst); else groundLabels.Add(inst);
+            }
+        }
+
+        Gl.BindFramebuffer(Gl.FRAMEBUFFER, targetFbo);
+        Gl.Viewport(0, 0, pxW, pxH);
+
+        // Wallpaper.
+        Gl.Disable(Gl.BLEND);
+        pBg.Use(SizePts);
+        Gl.BindVertexArray(emptyVao);
+        Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, wall);
+        Gl.ActiveTexture(Gl.TEXTURE0 + 1); Gl.BindTexture(Gl.TEXTURE_2D, track);
+        pBg.I("wall", 0); pBg.I("track", 1);
+        Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+        Gl.ActiveTexture(Gl.TEXTURE0);
+        Gl.Enable(Gl.BLEND);
+
+        DrawSprites(groundLabels, labelTex, false);
+        // Only lifted icons cast a shadow, so the resting ones match Explorer's look exactly.
+        DrawSprites(ground.FindAll(x => x.ShadowAlpha <= 0.015f), iconTex, false);
+        DrawSprites(ground.FindAll(x => x.ShadowAlpha > 0.015f), iconTex, true);
+        DrawSprites(topLabels, labelTex, false);
+        DrawSprites(top, iconTex, true);
+
+        // Lidar sweep sits on the floor, under the robot.
+        if (sim.ScanActive > 0.01f)
+        {
+            pLidar.Use(SizePts);
+            Gl.BindVertexArray(emptyVao);
+            pLidar.F2("center", sim.Pos); pLidar.F("radius", MathF.Max(SizePts.X, SizePts.Y) * 0.85f);
+            pLidar.F("angle", -M.Pi / 2 + sim.ScanSweep); pLidar.F("alpha", sim.ScanActive);
+            Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+        }
+
+        DrawDock(sim);
+        DrawParticles(sim);
+        DrawRobot(sim);
+        DrawSprites(late, iconTex, false);
+    }
+
+    void DrawSprites(List<Inst> list, uint tex, bool shadows)
+    {
+        if (list.Count == 0 || tex == 0) return;
+        var count = Math.Min(list.Count, 4096);
+        for (int i = 0; i < count; i++)
+        {
+            var s = list[i]; var o = i * InstFloats;
+            inst[o] = s.Center.X; inst[o + 1] = s.Center.Y; inst[o + 2] = s.Half.X; inst[o + 3] = s.Half.Y;
+            inst[o + 4] = s.Intake.X; inst[o + 5] = s.Intake.Y; inst[o + 6] = s.Angle; inst[o + 7] = s.Scale;
+            inst[o + 8] = s.Alpha; inst[o + 9] = s.Slice; inst[o + 10] = s.Pull; inst[o + 11] = s.Agit;
+            inst[o + 12] = s.TR; inst[o + 13] = s.TG; inst[o + 14] = s.TB; inst[o + 15] = s.TA;
+            inst[o + 16] = s.ShadowOffset.X; inst[o + 17] = s.ShadowOffset.Y; inst[o + 18] = s.ShadowAlpha; inst[o + 19] = 0;
+        }
+        Gl.BindVertexArray(spriteVao);
+        Gl.BindBuffer(Gl.ARRAY_BUFFER, instBuf);
+        Gl.BufferData(Gl.ARRAY_BUFFER, inst.Length * 4, null, Gl.STREAM_DRAW);
+        fixed (float* p = inst) Gl.BufferSubData(Gl.ARRAY_BUFFER, 0, count * InstFloats * 4, p);
+        pSprite.Use(SizePts);
+        Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D_ARRAY, tex);
+        pSprite.I("tex", 0);
+        if (shadows)
+        {
+            pSprite.I("shadowPass", 1);
+            Gl.DrawArraysInstanced(Gl.TRIANGLES, 0, gridCount, count);
+        }
+        pSprite.I("shadowPass", 0);
+        Gl.DrawArraysInstanced(Gl.TRIANGLES, 0, gridCount, count);
+    }
+
+    void Shadow(V2 center, float radius, float strength, V2 offset, float blur, float kind, V2 halfBox)
+    {
+        pShadow.Use(SizePts);
+        Gl.BindVertexArray(emptyVao);
+        pShadow.F2("center", center); pShadow.F("radius", radius); pShadow.F("strength", strength); pShadow.F2("offset", offset);
+        pShadow.F("blur", blur); pShadow.F("kind", kind); pShadow.F2("halfBox", halfBox); pShadow.F("angle", 0);
+        Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+    }
+
+    void DrawDock(Sim sim)
+    {
+        var drop = sim.DockDrop;
+        var bounce = 1 - MathF.Pow(1 - drop, 3);
+        var scale = 1 + (1 - bounce) * 0.55f;
+        var alpha = sim.DockAlpha * M.Smooth(0, 0.35f, drop);
+        var shakeK = sim.Phase == Phase.Dropping ? sim.Shake : 0;
+        var shakeOff = new V2(MathF.Sin(sim.T * 70), MathF.Cos(sim.T * 61)) * shakeK * 3;
+        var center = sim.DockPos + shakeOff;
+        var R = sim.R * scale;
+        var towerC = center + new V2(0, R * 1.04f);
+        var height = 1 - bounce;
+        Shadow(towerC, R * 0.3f, 0.44f * alpha * (1 - height * 0.6f), new V2(5, 8) + new V2(40, 70) * height, 20 + height * 40, 1, new V2(R * 1.3f, R * 1.02f));
+
+        pDock.Use(SizePts);
+        Gl.BindVertexArray(emptyVao);
+        pDock.F2("center", center); pDock.F2("half_", R * 1.36f, R * 2.14f);
+        pDock.F("radius", R); pDock.F("alpha", alpha); pDock.F("bag", sim.BagFill); pDock.F("glow", sim.BagGlow); pDock.F("ledPulse", sim.LedPulse);
+        pDock.F4("led", sim.Led.X, sim.Led.Y, sim.Led.Z, 1);
+        Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, logoTex); pDock.I("logo", 0);
+        Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+    }
+
+    void DrawParticles(Sim sim)
+    {
+        if (sim.Particles.Count == 0) return;
+        int n = 0;
+        foreach (var q in sim.Particles)
+        {
+            if (n >= 2600) break;
+            var k = M.Clamp(q.Life / q.MaxLife, 0, 1);
+            var a = q.A * (q.Chip > 0.5f ? M.Smooth(0, 0.3f, k) : MathF.Sin(k * M.Pi));
+            var o = n * PartFloats;
+            parts[o] = q.Pos.X; parts[o + 1] = q.Pos.Y; parts[o + 2] = q.Size; parts[o + 3] = q.Ang;
+            parts[o + 4] = q.R; parts[o + 5] = q.G; parts[o + 6] = q.B; parts[o + 7] = a;
+            parts[o + 8] = q.Chip; parts[o + 9] = 0; parts[o + 10] = 0; parts[o + 11] = 0;
+            n++;
+        }
+        Gl.BindVertexArray(partVao);
+        Gl.BindBuffer(Gl.ARRAY_BUFFER, partBuf);
+        Gl.BufferData(Gl.ARRAY_BUFFER, parts.Length * 4, null, Gl.STREAM_DRAW);
+        fixed (float* p = parts) Gl.BufferSubData(Gl.ARRAY_BUFFER, 0, n * PartFloats * 4, p);
+        pPart.Use(SizePts);
+        Gl.DrawArraysInstanced(Gl.TRIANGLES, 0, 6, n);
+    }
+
+    void DrawRobot(Sim sim)
+    {
+        var drop = sim.DockDrop;
+        var bounce = 1 - MathF.Pow(1 - drop, 3);
+        var dropScale = 1 + (1 - bounce) * 0.55f;
+        var liftK = sim.Lift;
+        var scale = dropScale * (1 + liftK * 0.13f);
+        var R = sim.R * scale;
+        var alpha = sim.RobotAlpha * M.Smooth(0, 0.35f, drop);
+        var height = (1 - bounce) + liftK * 0.9f;
+        var shakeP = new V2(MathF.Sin(sim.T * 83), MathF.Cos(sim.T * 71)) * sim.Shake * 2.6f;
+        if (sim.Picked) shakeP = new V2(MathF.Sin(sim.T * 19), MathF.Cos(sim.T * 15)) * 1.2f;
+        var pos = sim.Pos;
+        // Two-part shadow: a tight contact core and a wide soft one.
+        Shadow(pos, R * 0.985f, 0.40f * (1 - height * 0.5f) * alpha, new V2(2, 3) + new V2(26, 44) * height, 7 + 18 * height, 0, V2.Zero);
+        Shadow(pos, R * 0.985f, 0.30f * (1 - height * 0.5f) * alpha, new V2(10, 16) + new V2(34, 58) * height, 26 + 34 * height, 0, V2.Zero);
+        // Side brushes reach out from under the shell.
+        var (l, r) = sim.BrushCenters;
+        pBrush.Use(SizePts);
+        Gl.BindVertexArray(emptyVao);
+        for (int i = 0; i < 2; i++)
+        {
+            var c = i == 0 ? l : r;
+            pBrush.F2("center", pos + (c - pos) * scale + shakeP); pBrush.F("radius", R * 0.56f); pBrush.F("angle", sim.BrushAngle);
+            pBrush.F("speed", sim.BrushSpeed); pBrush.F("alpha", alpha); pBrush.F("sign_", i == 0 ? 1 : -1);
+            Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+        }
+        pRobot.Use(SizePts);
+        pRobot.F2("center", pos); pRobot.F("radius", R); pRobot.F2("shake", shakeP);
+        pRobot.F("heading", sim.Heading); pRobot.F("lidar", sim.LidarAngle); pRobot.F("bumper", sim.Bumper); pRobot.F("ledPulse", sim.LedPulse);
+        pRobot.F4("led", sim.Led.X, sim.Led.Y, sim.Led.Z, 1); pRobot.F("alpha", alpha);
+        Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, logoTex); pRobot.I("logo", 0);
+        Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+    }
+
+    void StampTrack(Sim sim, float dt)
+    {
+        Gl.BindFramebuffer(Gl.FRAMEBUFFER, trackFbo);
+        Gl.Viewport(0, 0, trackW, trackH);
+        Gl.BindVertexArray(emptyVao);
+        // Very slow fade of the nap, so a run stays visible and then relaxes.
+        fadeAcc += dt;
+        if (fadeAcc > 0.28f)
+        {
+            fadeAcc = 0;
+            Gl.BlendEquation(Gl.FUNC_REVERSE_SUBTRACT);
+            Gl.BlendFunc(Gl.ONE, Gl.ONE);
+            Gl.ColorMask(1, 0, 0, 0);
+            pFade.Use(SizePts); pFade.F("amount", 1 / 255f);
+            Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+            Gl.ColorMask(1, 1, 1, 1);
+            Gl.BlendEquation(Gl.FUNC_ADD);
+            Gl.BlendFunc(Gl.ONE, Gl.ONE_MINUS_SRC_ALPHA);
+        }
+        if (sim.SuctionOn && MathF.Abs(sim.V) > 8 && !sim.Picked)
+        {
+            // Pattern follows travel direction so opposite passes read as lighter and darker lanes.
+            var dirv = sim.Fwd;
+            var dir = 0.5f + 0.5f * (MathF.Abs(dirv.X) > MathF.Abs(dirv.Y) ? (dirv.X > 0 ? 1 : -1) : (dirv.Y > 0 ? 0.5f : -0.5f));
+            var from = lastStamp ?? sim.Pos;
+            var segLen = (sim.Pos - from).Len;
+            Gl.Disable(Gl.BLEND);
+            pStamp.Use(SizePts);
+            pStamp.F2("center", (from + sim.Pos) * 0.5f - sim.Fwd * (sim.R * 0.2f)); pStamp.F2("half_", segLen * 0.5f + 8, sim.R * 0.86f);
+            pStamp.F("angle", sim.Heading); pStamp.F("dir", dir);
+            Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+            Gl.Enable(Gl.BLEND);
+        }
+        lastStamp = sim.Pos;
+    }
+}

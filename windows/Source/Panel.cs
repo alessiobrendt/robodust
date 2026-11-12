@@ -1,0 +1,708 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Shapes;
+
+namespace RoboDust;
+
+/// The floating control panel, laid out like the Mac one. Built in code and rebuilt whenever what
+/// it shows changes shape; the live numbers update in place.
+public sealed class Panel : Window
+{
+    static readonly Color Accent = Color.FromRgb(92, 214, 250), Amber = Color.FromRgb(250, 184, 51), Orange = Color.FromRgb(255, 159, 10);
+    static readonly Brush Bg = new SolidColorBrush(Color.FromRgb(23, 23, 23));
+    static readonly Brush Primary = Brushes.White, Secondary = new SolidColorBrush(Color.FromRgb(160, 160, 165));
+    static readonly FontFamily Font = new("Segoe UI Variable Text, Segoe UI");
+
+    readonly Model model;
+    readonly StackPanel root = new() { Margin = new Thickness(20, 18, 20, 20) };
+    string shape = "";
+    TextBlock statusText, batteryText, binText, collectedText, bytesText, timeText, questionText;
+    Button goButton;
+    Border batteryBar, binBar;
+    MapView map;
+    double anchorBottom = double.NaN;
+
+    public Panel(Model m)
+    {
+        model = m;
+        Title = "RoboDust";
+        Width = 372;
+        SizeToContent = SizeToContent.Height;
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
+        Topmost = true;
+        ShowInTaskbar = true;
+        Background = Bg;
+        FontFamily = Font;
+        Foreground = Primary;
+        UseLayoutRounding = true;
+        Content = root;
+        MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) try { DragMove(); } catch { } };
+        KeyDown += OnKey;
+        SourceInitialized += (_, _) =>
+        {
+            var h = new WindowInteropHelper(this).Handle;
+            int round = 2, dark = 1;
+            Native.DwmSetWindowAttribute(h, Native.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, 4);
+            Native.DwmSetWindowAttribute(h, Native.DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, 4);
+        };
+        // Grow and shrink with the content, keeping the bottom edge where it is.
+        SizeChanged += (_, _) =>
+        {
+            if (double.IsNaN(anchorBottom)) return;
+            var wa = SystemParameters.WorkArea;
+            Top = Math.Max(wa.Top, Math.Min(anchorBottom, wa.Bottom) - ActualHeight);
+        };
+        LocationChanged += (_, _) => { if (IsLoaded) anchorBottom = Top + ActualHeight; };
+        Loaded += (_, _) =>
+        {
+            var wa = SystemParameters.WorkArea;
+            Left = wa.Right - ActualWidth - 28;
+            Top = wa.Bottom - ActualHeight - 28;
+            anchorBottom = Top + ActualHeight;
+        };
+        Refresh();
+    }
+
+    void OnKey(object sender, KeyEventArgs e)
+    {
+        if (model.Stage != Stage.Running || model.Applying) return;
+        if (e.Key == Key.Escape) { model.Stop(); e.Handled = true; }
+        if (e.Key == Key.Space && e.OriginalSource is not ButtonBase) { model.TogglePause(); e.Handled = true; }
+    }
+
+    // MARK: - Refresh
+
+    string Shape()
+    {
+        var m = model;
+        return string.Join("|", m.Stage, m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied or Phase.PuttingBack or Phase.Leaving or Phase.Finished ? m.Phase.ToString() : "live",
+            m.Paused, m.Note, m.Outcome, m.Mode, m.Source, m.ReviewOpen, m.Result?.Title, m.Result?.Detail, m.Applying, m.Support, m.SkipFinalClick, m.ClearWindows,
+            m.LastRun?.Id, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
+    }
+
+    public void Refresh()
+    {
+        var s = Shape();
+        if (s != shape) { shape = s; Rebuild(); }
+        UpdateLive();
+    }
+
+    void UpdateLive()
+    {
+        var m = model;
+        if (statusText != null) statusText.Text = m.Stage == Stage.Running ? m.Status : "Ein Saugroboter für deinen Desktop";
+        if (questionText != null) { questionText.Text = Question; goButton.IsEnabled = SelectedCount > 0; }
+        if (batteryBar != null)
+        {
+            batteryText.Text = $"{(int)(m.Battery * 100)} %";
+            binText.Text = $"{(int)(Math.Min(m.Bin, 1) * 100)} %";
+            SetBar(batteryBar, m.Battery);
+            SetBar(binBar, m.Bin);
+            binBar.Background = new SolidColorBrush(m.Bin > 0.85 ? Orange : Accent);
+            collectedText.Text = m.Collected.ToString();
+            bytesText.Text = Fmt.Bytes(m.CollectedBytes);
+            var t = (int)m.RunTime; timeText.Text = $"{t / 60}:{t % 60:00}";
+            map?.InvalidateVisual();
+        }
+    }
+
+    static void SetBar(Border bar, float v)
+    {
+        if (bar.Parent is Grid g && g.ActualWidth > 0) bar.Width = g.ActualWidth * Math.Clamp(v, 0, 1);
+        else bar.Tag = v;
+    }
+
+    void Rebuild()
+    {
+        root.Children.Clear();
+        statusText = null; batteryBar = null; map = null; questionText = null; goButton = null;
+        root.Children.Add(Header());
+        var body = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
+        root.Children.Add(body);
+        switch (model.Stage)
+        {
+            case Stage.Ready: Setup(body); break;
+            case Stage.Preparing: Preparing(body); break;
+            case Stage.Running: Running(body); break;
+        }
+    }
+
+    // MARK: - Pieces
+
+    UIElement Header()
+    {
+        var g = new Grid();
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var glyph = new Grid { Width = 30, Height = 30, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+        glyph.Children.Add(new Ellipse { Fill = new SolidColorBrush(Color.FromRgb(230, 230, 230)) });
+        glyph.Children.Add(new Ellipse { Fill = new SolidColorBrush(Color.FromRgb(31, 31, 31)), Margin = new Thickness(4.5) });
+        glyph.Children.Add(new Ellipse { Fill = new SolidColorBrush(Accent), Width = 9.6, Height = 9.6, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 6, 0, 0) });
+        g.Children.Add(glyph);
+        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        titles.Children.Add(new TextBlock { Text = "RoboDust", FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = Primary });
+        statusText = new TextBlock { FontSize = 12, Foreground = Secondary, TextTrimming = TextTrimming.CharacterEllipsis };
+        titles.Children.Add(statusText);
+        Grid.SetColumn(titles, 1);
+        g.Children.Add(titles);
+        var icons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (model.Stage == Stage.Running)
+            icons.Children.Add(IconButton(model.Muted ? "" : "", model.Muted ? "Ton an" : "Ton aus", () => { model.Muted = !model.Muted; model.Changed(); }));
+        else
+        {
+            icons.Children.Add(IconButton("", "Über RoboDust", () => model.About()));
+            icons.Children.Add(IconButton("", "Beenden", () => model.Quit()));
+        }
+        Grid.SetColumn(icons, 2);
+        g.Children.Add(icons);
+        return g;
+    }
+
+    static Button IconButton(string glyph, string tip, Action click)
+    {
+        var b = new Button
+        {
+            Content = new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 13, Foreground = Secondary },
+            ToolTip = tip, Width = 28, Height = 28, Cursor = Cursors.Hand, Focusable = false,
+        };
+        b.Template = Template(new CornerRadius(6), Brushes.Transparent, null, new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)));
+        b.Click += (_, _) => click();
+        return b;
+    }
+
+    static new ControlTemplate Template(CornerRadius radius, Brush bg, Brush border, Brush hover)
+    {
+        var t = new ControlTemplate(typeof(Button));
+        var bd = new FrameworkElementFactory(typeof(Border)) { Name = "bd" };
+        bd.SetValue(Border.CornerRadiusProperty, radius);
+        bd.SetValue(Border.BackgroundProperty, bg);
+        if (border != null) { bd.SetValue(Border.BorderBrushProperty, border); bd.SetValue(Border.BorderThicknessProperty, new Thickness(1)); }
+        var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+        cp.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        cp.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+        bd.AppendChild(cp);
+        t.VisualTree = bd;
+        var over = new Trigger { Property = IsMouseOverProperty, Value = true };
+        over.Setters.Add(new Setter(Border.BackgroundProperty, hover, "bd"));
+        t.Triggers.Add(over);
+        var pressed = new Trigger { Property = ButtonBase.IsPressedProperty, Value = true };
+        pressed.Setters.Add(new Setter(OpacityProperty, 0.75, "bd"));
+        t.Triggers.Add(pressed);
+        var disabled = new Trigger { Property = IsEnabledProperty, Value = false };
+        disabled.Setters.Add(new Setter(OpacityProperty, 0.4, "bd"));
+        t.Triggers.Add(disabled);
+        return t;
+    }
+
+    enum Kind { Primary, Quiet, Warn }
+
+    /// Colours are set here rather than by the system, so a label can never blend into its button.
+    static Button Btn(string text, Kind kind, Action click, string glyph = null)
+    {
+        Brush fg = kind == Kind.Primary ? Brushes.Black : kind == Kind.Warn ? new SolidColorBrush(Color.FromRgb(255, 140, 133)) : Brushes.White;
+        Color bg = kind == Kind.Primary ? Accent : kind == Kind.Warn ? Color.FromArgb(36, 255, 69, 59) : Color.FromArgb(26, 255, 255, 255);
+        Color hover = kind == Kind.Primary ? Color.FromRgb(130, 224, 252) : kind == Kind.Warn ? Color.FromArgb(56, 255, 69, 59) : Color.FromArgb(44, 255, 255, 255);
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        if (glyph != null) content.Children.Add(new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 12, Foreground = fg, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = text, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = fg, VerticalAlignment = VerticalAlignment.Center });
+        var b = new Button { Content = content, Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch, Cursor = Cursors.Hand };
+        b.Template = Template(new CornerRadius(9), new SolidColorBrush(bg), kind == Kind.Warn ? new SolidColorBrush(Color.FromArgb(128, 255, 102, 92)) : null, new SolidColorBrush(hover));
+        b.Click += (_, _) => click();
+        return b;
+    }
+
+    static TextBlock Text(string s, double size = 12, Brush color = null, bool bold = false) => new()
+    {
+        Text = s, FontSize = size, Foreground = color ?? Secondary, TextWrapping = TextWrapping.Wrap,
+        FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
+    };
+
+    static UIElement Field(string title, params UIElement[] content)
+    {
+        var p = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
+        p.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.Medium, Foreground = Secondary, Margin = new Thickness(0, 0, 0, 7) });
+        foreach (var c in content) p.Children.Add(c);
+        return p;
+    }
+
+    static UIElement Segmented<T>(IList<(T value, string title)> options, T selected, Action<T> pick)
+    {
+        var outer = new Border { CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromArgb(22, 255, 255, 255)), Padding = new Thickness(2) };
+        var g = new UniformGrid { Rows = 1, Columns = options.Count };
+        foreach (var (value, title) in options)
+        {
+            var on = EqualityComparer<T>.Default.Equals(value, selected);
+            var b = new Button
+            {
+                Content = new TextBlock { Text = title, FontSize = 13, FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal, Foreground = on ? Brushes.White : Secondary },
+                Height = 28, Cursor = Cursors.Hand,
+            };
+            b.Template = Template(new CornerRadius(6), on ? new SolidColorBrush(Color.FromArgb(56, 255, 255, 255)) : Brushes.Transparent, null,
+                new SolidColorBrush(on ? Color.FromArgb(56, 255, 255, 255) : Color.FromArgb(18, 255, 255, 255)));
+            var v = value;
+            b.Click += (_, _) => pick(v);
+            g.Children.Add(b);
+        }
+        outer.Child = g;
+        return outer;
+    }
+
+    static UIElement Switch(string label, bool on, Action<bool> set)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 12), Cursor = Cursors.Hand, Background = Brushes.Transparent };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var pill = new Border
+        {
+            Width = 32, Height = 18, CornerRadius = new CornerRadius(9), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center,
+            Background = on ? new SolidColorBrush(Accent) : new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)),
+            Child = new Ellipse { Width = 14, Height = 14, Fill = on ? Brushes.Black : Brushes.White, HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left, Margin = new Thickness(2, 0, 2, 0) },
+        };
+        row.Children.Add(pill);
+        var t = new TextBlock { Text = label, FontSize = 13, Foreground = Primary, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumn(t, 1);
+        row.Children.Add(t);
+        row.MouseLeftButtonUp += (_, e) => { e.Handled = true; set(!on); };
+        row.MouseLeftButtonDown += (_, e) => e.Handled = true;   // not a window drag
+        return row;
+    }
+
+    static Border Card(Color tint, bool outlined, params UIElement[] content)
+    {
+        var p = new StackPanel();
+        foreach (var c in content) p.Children.Add(c);
+        return new Border
+        {
+            CornerRadius = new CornerRadius(10), Padding = new Thickness(12), Margin = new Thickness(0, 0, 0, 16),
+            Background = new SolidColorBrush(Color.FromArgb(outlined ? (byte)20 : (byte)16, tint.R, tint.G, tint.B)),
+            BorderBrush = outlined ? new SolidColorBrush(Color.FromArgb(190, tint.R, tint.G, tint.B)) : null,
+            BorderThickness = new Thickness(outlined ? 1 : 0), Child = p,
+        };
+    }
+
+    static UIElement Row(double gap, params UIElement[] items)
+    {
+        var g = new UniformGrid { Rows = 1, Columns = items.Length, Margin = new Thickness(0, 8, 0, 0) };
+        for (int i = 0; i < items.Length; i++)
+        {
+            if (items[i] is FrameworkElement fe) fe.Margin = new Thickness(i == 0 ? 0 : gap / 2, 0, i == items.Length - 1 ? 0 : gap / 2, 0);
+            g.Children.Add(items[i]);
+        }
+        return g;
+    }
+
+    static UIElement Stack(double gap, params UIElement[] items)
+    {
+        var p = new StackPanel();
+        for (int i = 0; i < items.Length; i++)
+        {
+            if (items[i] is FrameworkElement fe && i > 0) fe.Margin = new Thickness(fe.Margin.Left, gap, fe.Margin.Right, fe.Margin.Bottom);
+            p.Children.Add(items[i]);
+        }
+        return p;
+    }
+
+    // MARK: - Setup
+
+    void Setup(StackPanel body)
+    {
+        var m = model;
+        if (m.Result != null)
+        {
+            var r = m.Result;
+            var items = new List<UIElement> { Text(r.Title, 13, r.IsError ? new SolidColorBrush(Orange) : Primary, true) };
+            if (r.Detail != null) { var d = Text(r.Detail); d.Margin = new Thickness(0, 6, 0, 0); items.Add(d); }
+            var buttons = new List<UIElement>();
+            if (r.CanUndo) buttons.Add(Btn("Rückgängig", Kind.Quiet, () => m.Undo()));
+            buttons.Add(Btn("Fertig", Kind.Quiet, () => m.DismissResult()));
+            items.Add(Row(8, buttons.ToArray()));
+            body.Children.Add(Card(Colors.White, false, items.ToArray()));
+        }
+        if (m.Support != SupportCard.Hidden) body.Children.Add(SupportCardView());
+        if (m.Result != null) return;
+        // After a clean, the result is all there is to look at. Done brings the settings back.
+        if (m.LastRun is { } last)
+        {
+            var what = last.Mode == "move" ? "weggeräumt" : "ausgeblendet";
+            var n = last.Items.Count;
+            var items = new List<UIElement>
+            {
+                Text($"Letzter Durchgang: {n} {(n == 1 ? "Element" : "Elemente")} {what}", 13, Primary, true),
+                Text($"am {last.When:dd.MM.yyyy 'um' HH:mm}. Du kannst alles zurückholen."),
+            };
+            var bs = new List<UIElement> { Btn("Zurückholen", Kind.Quiet, () => m.UndoLast()) };
+            if (last.Mode == "move") bs.Add(Btn("Ablage öffnen", Kind.Quiet, () => m.OpenShelf()));
+            items.Add(Row(8, bs.ToArray()));
+            body.Children.Add(Card(Colors.White, false, items.ToArray()));
+        }
+        body.Children.Add(Field("Aufräumen", Segmented(new List<(Source, string)> { (Source.Sample, "Beispiel-Chaos"), (Source.Real, "Mein Desktop") }, m.Source, v => { m.Source = v; m.Changed(); })));
+        var after = new List<UIElement>
+        {
+            Segmented(new List<(CleanMode, string)> { (CleanMode.Tidy, "Ordnen"), (CleanMode.Move, "Wegräumen"), (CleanMode.Hide, "Ausblenden") }, m.Mode, v => { m.Mode = v; m.Changed(); }),
+        };
+        var blurb = Text(ModeBlurb); blurb.Margin = new Thickness(0, 7, 0, 0); after.Add(blurb);
+        if (m.Mode != CleanMode.Tidy)
+        {
+            var sw = Switch("Nicht nachfragen, direkt aufräumen", m.SkipFinalClick, v => { m.SkipFinalClick = v; m.Changed(); });
+            ((FrameworkElement)sw).Margin = new Thickness(0, 10, 0, 0);
+            after.Add(sw);
+        }
+        body.Children.Add(Field("Danach", after.ToArray()));
+        body.Children.Add(Switch("Fenster minimieren, damit ich zuschauen kann", m.ClearWindows, v => { m.ClearWindows = v; m.Changed(); }));
+        if (m.Note != null) { var n = Text(m.Note, 12, new SolidColorBrush(Orange)); n.Margin = new Thickness(0, 0, 0, 12); body.Children.Add(n); }
+        var start = Btn("Saugen starten", Kind.Primary, () => m.Start());
+        start.IsDefault = true;
+        start.Margin = new Thickness(0, 4, 0, 14);
+        body.Children.Add(start);
+        var foot = new Grid();
+        foot.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        foot.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        foot.Children.Add(new TextBlock
+        {
+            Text = m.Source == Source.Real ? "" : "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 13,
+            Foreground = new SolidColorBrush(m.Source == Source.Real ? Orange : Accent), Margin = new Thickness(0, 1, 8, 0),
+        });
+        var ft = Text(Footnote); Grid.SetColumn(ft, 1); foot.Children.Add(ft);
+        body.Children.Add(foot);
+    }
+
+    string ModeBlurb
+    {
+        get
+        {
+            var ask = model.SkipFinalClick ? "" : " RoboDust fragt vorher noch einmal nach.";
+            return model.Mode switch
+            {
+                CleanMode.Tidy => "Sortiert alles nach Art in ordentliche Spalten. Nur die Symbole bewegen sich.",
+                CleanMode.Move => "Räumt alles in einen Ordner unter „RoboDust Ablage“. Nichts wird gelöscht." + ask,
+                _ => "Blendet alles aus. Die Dateien bleiben genau, wo sie sind." + ask,
+            };
+        }
+    }
+
+    string Footnote
+    {
+        get
+        {
+            if (model.Source != Source.Real) return "Das Beispiel-Chaos ist erfunden, also wird nichts Echtes angefasst.";
+            return model.Mode switch
+            {
+                CleanMode.Tidy => "RoboDust ordnet die Symbole auf deinem echten Desktop neu. Deine Dateien bleiben, wo sie sind.",
+                CleanMode.Move => "RoboDust verschiebt deine echten Dateien in die Ablage und löscht nie etwas. Gesperrtes, gerade Geändertes und Code-Projekte bleiben liegen.",
+                _ => "RoboDust blendet deine echten Dateien aus und löscht nie etwas. Gesperrtes, gerade Geändertes und Code-Projekte bleiben liegen.",
+            };
+        }
+    }
+
+    UIElement SupportCardView()
+    {
+        var m = model;
+        if (m.Support == SupportCard.Thanked)
+            return Card(Amber, true, Text("Danke! Das bedeutet einem kleinen Roboter sehr viel.", 13, Primary), Stack(10, new Border { Height = 0 }, Btn("Schließen", Kind.Quiet, () => m.Support_(null))));
+        var no = new Button { Content = Text("Nein danke", 13), Height = 36, Cursor = Cursors.Hand };
+        no.Template = Template(new CornerRadius(9), Brushes.Transparent, null, new SolidColorBrush(Color.FromArgb(14, 255, 255, 255)));
+        no.Click += (_, _) => m.Support_(null);
+        return Card(Amber, true,
+            Text("Hat’s dich zum Lächeln gebracht? Ein Stern oder ein Kaffee hilft Raufan, mehr lustige Software zu bauen.", 13, Primary),
+            Stack(8, new Border { Height = 2 },
+                Btn("Stern auf GitHub", Kind.Quiet, () => m.Support_("https://github.com/muhraufan/robodust"), ""),
+                Btn("Kauf mir einen Kaffee", Kind.Quiet, () => m.Support_("https://www.buymeacoffee.com/notmegapixels")),
+                no));
+    }
+
+    // MARK: - Preparing
+
+    void Preparing(StackPanel body)
+    {
+        body.Children.Add(Text("Kopiere deine Symbole…", 13, Primary));
+        var bar = new ProgressBar { Minimum = 0, Maximum = Math.Max(model.PrepareTotal, 1), Value = model.Prepared, Height = 5, Margin = new Thickness(0, 10, 0, 8), Foreground = new SolidColorBrush(Accent), Background = new SolidColorBrush(Color.FromArgb(26, 255, 255, 255)), BorderThickness = new Thickness(0) };
+        body.Children.Add(bar);
+        body.Children.Add(Text($"{model.Prepared} von {model.PrepareTotal}"));
+    }
+
+    // MARK: - Running
+
+    void Running(StackPanel body)
+    {
+        var m = model;
+        map = new MapView(m) { Height = 190, Margin = new Thickness(0, 0, 0, 14) };
+        body.Children.Add(map);
+        var meters = new UniformGrid { Rows = 1, Columns = 2, Margin = new Thickness(0, 0, 0, 14) };
+        meters.Children.Add(Meter("Akku", Color.FromRgb(107, 230, 140), out batteryText, out batteryBar, new Thickness(0, 0, 9, 0)));
+        meters.Children.Add(Meter("Behälter", Accent, out binText, out binBar, new Thickness(9, 0, 0, 0)));
+        body.Children.Add(meters);
+        var stats = new Grid { Margin = new Thickness(0, 0, 0, 14) };
+        for (int i = 0; i < 3; i++) stats.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        stats.Children.Add(Stat(out collectedText, $"von {m.Total} Elementen", 0));
+        stats.Children.Add(Stat(out bytesText, "eingesammelt", 1));
+        stats.Children.Add(Stat(out timeText, "vergangen", 2));
+        body.Children.Add(stats);
+        Controls(body);
+    }
+
+    static UIElement Meter(string title, Color tint, out TextBlock value, out Border bar, Thickness margin)
+    {
+        var p = new StackPanel { Margin = margin };
+        var head = new Grid();
+        head.Children.Add(Text(title));
+        value = new TextBlock { FontSize = 12, Foreground = Primary, HorizontalAlignment = HorizontalAlignment.Right };
+        head.Children.Add(value);
+        p.Children.Add(head);
+        var track = new Grid { Height = 5, Margin = new Thickness(0, 5, 0, 0) };
+        track.Children.Add(new Border { CornerRadius = new CornerRadius(2.5), Background = new SolidColorBrush(Color.FromArgb(26, 255, 255, 255)) });
+        bar = new Border { CornerRadius = new CornerRadius(2.5), Background = new SolidColorBrush(tint), HorizontalAlignment = HorizontalAlignment.Left, Width = 0 };
+        var b = bar;
+        track.SizeChanged += (_, _) => { if (b.Tag is float v) b.Width = track.ActualWidth * Math.Clamp(v, 0, 1); };
+        track.Children.Add(bar);
+        p.Children.Add(track);
+        return p;
+    }
+
+    static UIElement Stat(out TextBlock big, string small, int col)
+    {
+        var p = new StackPanel { HorizontalAlignment = col == 0 ? HorizontalAlignment.Left : col == 2 ? HorizontalAlignment.Right : HorizontalAlignment.Center };
+        big = new TextBlock { FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Primary };
+        p.Children.Add(big);
+        p.Children.Add(new TextBlock { Text = small, FontSize = 11, Foreground = Secondary });
+        Grid.SetColumn(p, col);
+        return p;
+    }
+
+    bool AwaitingChoice => model.Phase == Phase.Done && model.Mode != CleanMode.Tidy && !model.SkipFinalClick && model.Outcome == null && !model.Applying;
+    int SelectedCount => model.Total - model.Excluded.Count;
+
+    void Controls(StackPanel body)
+    {
+        var m = model;
+        if (m.Applying)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(new ProgressBar { IsIndeterminate = true, Width = 60, Height = 4, Margin = new Thickness(0, 0, 10, 0), Foreground = new SolidColorBrush(Accent), Background = new SolidColorBrush(Color.FromArgb(26, 255, 255, 255)), BorderThickness = new Thickness(0) });
+            row.Children.Add(Text(m.Outcome == CleanMode.Move ? "Räumt weg…" : m.Outcome == CleanMode.Hide ? "Blendet aus…" : "Ordnet deine Symbole…", 13, Primary));
+            body.Children.Add(row);
+        }
+        else if (AwaitingChoice) Decision(body);
+        else if (m.RealRun && m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied)
+        {
+            if (m.Phase != Phase.Done || m.Mode == CleanMode.Tidy) body.Children.Add(Text("Sortiert deine Symbole in Spalten…", 13, Primary));
+        }
+        else if (m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied)
+        {
+            var title = m.Outcome switch { CleanMode.Move => $"{m.Total} Elemente weggeräumt", CleanMode.Hide => $"{m.Total} Elemente ausgeblendet", _ => "In Spalten sortiert" };
+            body.Children.Add(Text(title, 13, Primary, true));
+            var d = Text("Das war das Beispiel-Chaos, also hat sich nichts Echtes geändert. Leg alles zurück, um fertig zu werden.");
+            d.Margin = new Thickness(0, 4, 0, 12);
+            body.Children.Add(d);
+            body.Children.Add(Btn("Alles zurücklegen", Kind.Primary, () => m.PutBack()));
+        }
+        else if (m.Phase is Phase.PuttingBack or Phase.Leaving or Phase.Finished) { }
+        else
+        {
+            var g = new UniformGrid { Rows = 1, Columns = 2, Margin = new Thickness(0, 0, 0, 10) };
+            var pause = Btn(m.Paused ? "Weiter" : "Pause", Kind.Quiet, () => m.TogglePause(), m.Paused ? "" : ""); pause.Margin = new Thickness(0, 0, 4, 0);
+            var stop = Btn("Stopp", Kind.Quiet, () => m.Stop(), ""); stop.Margin = new Thickness(4, 0, 0, 0);
+            g.Children.Add(pause); g.Children.Add(stop);
+            body.Children.Add(g);
+            body.Children.Add(Text(m.RealRun ? "Wenn du vor dem Ende stoppst, ändert sich nichts. Esc geht auch." : "Esc stoppt und bringt deinen Desktop zurück. Heb den Roboter hoch, oder wirf ihm ein Symbol hin."));
+        }
+    }
+
+    string Question
+    {
+        get
+        {
+            var n = SelectedCount;
+            var noun = n == 1 ? "Element" : "Elemente";
+            return model.Mode == CleanMode.Move ? $"{n} {noun} in die Ablage räumen?" : $"{n} {noun} ausblenden?";
+        }
+    }
+
+    void Decision(StackPanel body)
+    {
+        var m = model;
+        var n = SelectedCount;
+        questionText = Text(Question, 13, Primary, true);
+        body.Children.Add(questionText);
+        var d = Text(DecisionBody); d.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(d);
+        if (m.RealRun && m.Mode == CleanMode.Move && m.UsesCloud)
+        {
+            var w = Text("Dein Desktop wird mit OneDrive synchronisiert. Was weggeräumt wird, verschwindet auch auf deinen anderen Geräten und liegt danach nur auf diesem PC.", 12, new SolidColorBrush(Orange));
+            w.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(w);
+        }
+        if (m.RealRun && m.Mode == CleanMode.Hide && m.HiddenShown)
+        {
+            var w = Text("Bei dir werden ausgeblendete Elemente angezeigt, deshalb siehst du sie danach weiterhin, nur blasser.", 12, new SolidColorBrush(Orange));
+            w.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(w);
+        }
+        if (m.RealRun)
+        {
+            var toggle = new Button { Cursor = Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 0) };
+            toggle.Content = new TextBlock { Text = (m.ReviewOpen ? "▾ " : "▸ ") + "Elemente prüfen", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = Primary };
+            toggle.Template = Template(new CornerRadius(4), Brushes.Transparent, null, Brushes.Transparent);
+            toggle.Click += (_, _) => { m.ReviewOpen = !m.ReviewOpen; m.Changed(); };
+            body.Children.Add(toggle);
+            if (m.ReviewOpen)
+            {
+                var list = new StackPanel();
+                foreach (var (index, name) in m.ReviewRows)
+                {
+                    var cb = new CheckBox
+                    {
+                        IsChecked = !m.Excluded.Contains(index), Foreground = Primary, Margin = new Thickness(0, 2, 0, 2),
+                        Content = new TextBlock { Text = name, FontSize = 12, Foreground = Primary, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 290 },
+                    };
+                    var i = index;
+                    cb.Checked += (_, _) => { m.Excluded.Remove(i); m.Changed(); };
+                    cb.Unchecked += (_, _) => { m.Excluded.Add(i); m.Changed(); };
+                    list.Children.Add(cb);
+                }
+                body.Children.Add(new ScrollViewer { Content = list, Height = 170, Margin = new Thickness(0, 6, 0, 0), VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+            }
+        }
+        var go = m.Mode == CleanMode.Move ? Btn("Wegräumen", Kind.Primary, () => m.Choose(CleanMode.Move)) : Btn("Ausblenden", Kind.Primary, () => m.Choose(CleanMode.Hide));
+        go.IsEnabled = n > 0;
+        goButton = go;
+        go.Margin = new Thickness(0, 12, 0, 8);
+        body.Children.Add(go);
+        body.Children.Add(Btn("Alles zurücklegen", Kind.Quiet, () => m.PutBack()));
+    }
+
+    string DecisionBody
+    {
+        get
+        {
+            var m = model;
+            if (!m.RealRun) return "Das ist das Beispiel-Chaos, es ändert sich nichts Echtes.";
+            var parts = new List<string>();
+            if (m.FileBytes > 0) parts.Add($"{Fmt.Bytes(m.FileBytes)} in Dateien");
+            if (m.FolderCount > 0) parts.Add($"{m.FolderCount} {(m.FolderCount == 1 ? "Ordner" : "Ordner")}");
+            var text = parts.Count > 0 ? string.Join(", dazu ", parts) + ". " : "";
+            text += "Nichts wird gelöscht, und du kannst alles mit einem Klick zurückholen.";
+            if (m.LeftAlone > 0) text += $" {m.LeftAlone} zur Sicherheit liegen gelassen.";
+            return text;
+        }
+    }
+}
+
+/// Renders the panel's states to PNGs, to review the layout without touching the screen.
+public static class PanelShot
+{
+    static void One(Model m, string path)
+    {
+        var p = new Panel(m);
+        var content = (FrameworkElement)p.Content;
+        p.Content = null;
+        var frame = new Border { Background = p.Background, Child = content, Width = 372 };
+        TextOptions.SetTextFormattingMode(frame, TextFormattingMode.Display);
+        frame.Measure(new Size(372, double.PositiveInfinity));
+        frame.Arrange(new Rect(frame.DesiredSize));
+        frame.UpdateLayout();
+        p.Refresh();
+        frame.UpdateLayout();
+        var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap((int)(372 * 2), (int)(frame.ActualHeight * 2), 192, 192, PixelFormats.Pbgra32);
+        bmp.Render(frame);
+        var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
+        using var fs = System.IO.File.Create(path);
+        enc.Save(fs);
+        p.Close();
+    }
+
+    public static void Render(string dir)
+    {
+        Settings.Persists = false;
+        System.IO.Directory.CreateDirectory(dir);
+        Model M() { var m = new Model(); m.Settings.SkipFinalClick = false; m.Settings.SupportCardShown = true; return m; }
+        var a = M(); a.Mode = CleanMode.Move; One(a, System.IO.Path.Combine(dir, "panel_ready.png"));
+        var a2 = M(); a2.Source = Source.Real; a2.Mode = CleanMode.Hide; a2.LastRun = new FileOps.Run { Mode = "move", When = DateTime.Now, Items = new() { new(), new(), new() } };
+        One(a2, System.IO.Path.Combine(dir, "panel_ready_real.png"));
+        var e = DesktopReader.Sample(new V2(1536, 912));
+        var s = new Sim(new V2(1536, 912), V2.Zero, new V2(1536, 912), e);
+        foreach (var it in s.Items.Take(30)) it.Seen = true;
+        var b = M(); b.Stage = Stage.Running; b.Sim = s; b.Status = "Saugt"; b.Phase = Phase.Cleaning; b.Total = 42; b.Collected = 17; b.CollectedBytes = 4_300_000_000; b.Bin = 0.7f; b.Battery = 0.92f; b.RunTime = 74;
+        One(b, System.IO.Path.Combine(dir, "panel_running.png"));
+        var d = M(); d.Stage = Stage.Running; d.Sim = s; d.Status = "Alles sauber"; d.Phase = Phase.Done; d.Total = 105; d.Collected = 105; d.FileBytes = 2_600_000_000; d.FolderCount = 3; d.LeftAlone = 9; d.RealRun = true; d.UsesCloud = true; d.Mode = CleanMode.Move; d.Battery = 0.9f; d.RunTime = 196; d.ReviewOpen = true;
+        d.ReviewRows = Enumerable.Range(0, 12).Select(i => (i, $"Screenshot 2026-10-{10 + i} 091422.png")).ToList();
+        One(d, System.IO.Path.Combine(dir, "panel_decision.png"));
+        var f = M(); f.Source = Source.Real; f.Result = new RunResult { Title = "105 Elemente in die Ablage geräumt", Detail = "Sie liegen in „~\\RoboDust Ablage\\2026-11-12 14.30.05“. 9 zur Sicherheit liegen gelassen.", CanUndo = true };
+        f.Support = SupportCard.Asking;
+        One(f, System.IO.Path.Combine(dir, "panel_result.png"));
+    }
+}
+
+public static class Fmt
+{
+    public static string Bytes(long b)
+    {
+        string[] units = { "Byte", "KB", "MB", "GB", "TB" };
+        double v = b; int u = 0;
+        while (v >= 1000 && u < units.Length - 1) { v /= 1000; u++; }
+        return u == 0 ? $"{b} Byte" : $"{v.ToString(v < 10 ? "0.#" : "0", System.Globalization.CultureInfo.GetCultureInfo("de-DE"))} {units[u]}";
+    }
+}
+
+/// The floor plan, like the one in a real robot's phone app. Draws only what lidar has "seen".
+public sealed class MapView : FrameworkElement
+{
+    readonly Model model;
+    static readonly Color Accent = Color.FromRgb(92, 214, 250);
+    public MapView(Model m) { model = m; }
+
+    protected override void OnRender(DrawingContext c)
+    {
+        var s = model.Sim;
+        if (s == null) return;
+        double W = ActualWidth, H = ActualHeight;
+        var k = Math.Min(W / s.Size.X, H / s.Size.Y);
+        double w = s.Size.X * k, h = s.Size.Y * k, ox = (W - w) / 2, oy = (H - h) / 2;
+        Point P(V2 v) => new(ox + v.X * k, oy + v.Y * k);
+        var frame = new Rect(ox, oy, w, h);
+        c.PushClip(new RectangleGeometry(frame, 8, 8));
+        c.DrawRectangle(new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)), null, frame);
+        if (s.Trail.Count > 1)
+        {
+            var g = new StreamGeometry();
+            using (var ctx = g.Open())
+            {
+                ctx.BeginFigure(P(s.Trail[0]), false, false);
+                for (int i = 1; i < s.Trail.Count; i++) ctx.LineTo(P(s.Trail[i]), true, true);
+            }
+            var wide = new Pen(new SolidColorBrush(Color.FromArgb(41, Accent.R, Accent.G, Accent.B)), s.R * 1.7 * k) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+            var thin = new Pen(new SolidColorBrush(Color.FromArgb(166, Accent.R, Accent.G, Accent.B)), 1) { LineJoin = PenLineJoin.Round };
+            c.DrawGeometry(null, wide, g);
+            c.DrawGeometry(null, thin, g);
+        }
+        var dock = P(s.DockPos + new V2(0, s.R * 1.2f));
+        c.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(190, 255, 255, 255)), null, new Rect(dock.X - 10, dock.Y - 6, 20, 12), 3, 3);
+        foreach (var it in s.Items)
+        {
+            if (!it.Seen || !it.OnFloor) continue;
+            c.DrawEllipse(new SolidColorBrush(KindColor(it.Entry.Kind)), null, P(it.Icon.Pos), 1.6, 1.6);
+        }
+        var rp = P(s.Pos); var rr = Math.Max(s.R * k, 4);
+        c.DrawEllipse(Brushes.White, null, rp, rr, rr);
+        c.DrawLine(new Pen(Brushes.Black, 1.5), rp, new Point(rp.X + Math.Cos(s.Heading) * rr, rp.Y + Math.Sin(s.Heading) * rr));
+        if (model.Phase == Phase.Scanning)
+        {
+            var ft = new FormattedText("Kartiert", System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 11, new SolidColorBrush(Accent), 1.25);
+            c.DrawText(ft, new Point(ox + 8, oy + 6));
+        }
+        c.Pop();
+    }
+
+    static Color KindColor(Kind k) => k switch
+    {
+        Kind.Folder => Color.FromRgb(102, 178, 255), Kind.Image => Color.FromRgb(255, 184, 102), Kind.Video => Color.FromRgb(255, 115, 128),
+        Kind.Document => Color.FromRgb(230, 230, 230), Kind.Archive => Color.FromRgb(204, 153, 255), Kind.Audio => Color.FromRgb(128, 242, 178),
+        _ => Color.FromRgb(153, 153, 153),
+    };
+}

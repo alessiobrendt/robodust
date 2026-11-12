@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>RoboDust.ico</ApplicationIcon>
+    <AssemblyName>RoboDust</AssemblyName>
+    <RootNamespace>RoboDust</RootNamespace>
+    <Version>0.8.0</Version>
+    <Product>RoboDust</Product>
+    <Company>Muhammad Raufan Yusup</Company>
+    <Copyright>© 2026 Muhammad Raufan Yusup</Copyright>
+    <Description>A robot vacuum for your Windows desktop</Description>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>
