@@ -584,7 +584,12 @@ public sealed class Panel : Window
             b.Click += (_, _) => { tryItem = item; Redraw(); if (item.Id.StartsWith("tune:horn")) PlayHorn(item); };
             grid.Children.Add(b);
         }
-        body.Children.Add(grid);
+        // The items scroll; the coins, the preview and the buttons above stay put. The panel never grows past the screen.
+        body.Children.Add(new ScrollViewer
+        {
+            Content = grid, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 4, 0),
+            MaxHeight = Math.Max(190, SystemParameters.WorkArea.Height - 640),
+        });
     }
 
     void StartPreview()
