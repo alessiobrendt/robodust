@@ -218,6 +218,12 @@ public sealed unsafe class Renderer
                     ShadowOffset = new V2(2, 3) + new V2(5, 9) * lift, ShadowAlpha = 0.34f * MathF.Max(lift, 0),
                 };
                 if (it.Ping > 0) { inst.TR = 0.45f; inst.TG = 0.95f; inst.TB = 1; inst.TA = it.Ping * 0.55f; }
+                // Fun mode: singed by the flamethrower, glowing at the edge while it's still in the fire.
+                else if (it.Scorch > 0.01f)
+                {
+                    var hot = sim.FlameLevel * (0.5f + 0.5f * MathF.Sin(sim.T * 23 + it.Icon.Seed));
+                    inst.TR = 0.13f + 0.5f * hot; inst.TG = 0.07f + 0.12f * hot; inst.TB = 0.03f; inst.TA = M.Clamp(it.Scorch * 0.78f, 0, 0.78f);
+                }
                 if (flying && it.Flight == Flight.ToBag) late.Add(inst);
                 else if (flying || it.Icon.Ingesting) top.Add(inst);
                 else ground.Add(inst);
@@ -348,11 +354,45 @@ public sealed unsafe class Renderer
         {
             if (n >= 2600) break;
             var k = M.Clamp(q.Life / q.MaxLife, 0, 1);
-            var a = q.A * (q.Chip > 0.5f ? M.Smooth(0, 0.3f, k) : MathF.Sin(k * M.Pi));
+            var age = 1 - k;
+            float r = q.R, g = q.G, b = q.B, size = q.Size, glow = 0, chip = q.Chip, a;
+            switch (q.Kind)
+            {
+                case PartKind.Fire:
+                {
+                    // White-hot at the nozzle, through orange and red, into a wisp of smoke. Glows while it burns.
+                    (r, g, b) = age < 0.25f ? Mix((1, 0.95f, 0.75f), (1, 0.62f, 0.16f), age / 0.25f)
+                              : age < 0.6f ? Mix((1, 0.62f, 0.16f), (0.85f, 0.18f, 0.04f), (age - 0.25f) / 0.35f)
+                              : Mix((0.85f, 0.18f, 0.04f), (0.22f, 0.2f, 0.19f), (age - 0.6f) / 0.4f);
+                    size = q.Size * (1 + age * 2.6f);
+                    glow = 1 - M.Smooth(0.55f, 0.8f, age);
+                    a = M.Smooth(0, 0.06f, age) * (glow > 0.5f ? 0.85f : 0.4f) * (1 - M.Smooth(0.75f, 1, age));
+                    break;
+                }
+                case PartKind.Smoke:
+                    size = q.Size * (1 + age * 2.2f);
+                    a = q.A * MathF.Sin(k * M.Pi) * 0.7f;
+                    break;
+                case PartKind.Bubble:
+                    chip = 2;
+                    size = q.Size * (0.55f + 0.45f * M.Smooth(0, 0.25f, age));
+                    a = M.Smooth(0, 0.08f, k);
+                    break;
+                case PartKind.Confetti:
+                    a = q.A * M.Smooth(0, 0.35f, k);
+                    break;
+                case PartKind.Glow:
+                    glow = 1;
+                    a = q.A * k;
+                    break;
+                default:
+                    a = q.A * (q.Chip > 0.5f ? M.Smooth(0, 0.3f, k) : MathF.Sin(k * M.Pi));
+                    break;
+            }
             var o = n * PartFloats;
-            parts[o] = q.Pos.X; parts[o + 1] = q.Pos.Y; parts[o + 2] = q.Size; parts[o + 3] = q.Ang;
-            parts[o + 4] = q.R; parts[o + 5] = q.G; parts[o + 6] = q.B; parts[o + 7] = a;
-            parts[o + 8] = q.Chip; parts[o + 9] = 0; parts[o + 10] = 0; parts[o + 11] = 0;
+            parts[o] = q.Pos.X; parts[o + 1] = q.Pos.Y; parts[o + 2] = size; parts[o + 3] = q.Ang;
+            parts[o + 4] = r; parts[o + 5] = g; parts[o + 6] = b; parts[o + 7] = a;
+            parts[o + 8] = chip; parts[o + 9] = glow; parts[o + 10] = 0; parts[o + 11] = 0;
             n++;
         }
         Gl.BindVertexArray(partVao);
@@ -361,6 +401,12 @@ public sealed unsafe class Renderer
         fixed (float* p = parts) Gl.BufferSubData(Gl.ARRAY_BUFFER, 0, n * PartFloats * 4, p);
         pPart.Use(SizePts, Origin);
         Gl.DrawArraysInstanced(Gl.TRIANGLES, 0, 6, n);
+    }
+
+    static (float, float, float) Mix((float r, float g, float b) a, (float r, float g, float b) b, float t)
+    {
+        t = M.Clamp(t, 0, 1);
+        return (a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t);
     }
 
     void DrawRobot(Sim sim)

@@ -1,0 +1,204 @@
+using System;
+using System.Collections.Generic;
+
+namespace RoboDust;
+
+/// Spaßmodus: gadgets bolted onto the robot. Purely a picture: nothing here touches a file, and a
+/// "burnt" icon is back to normal the moment it lands where it was.
+public enum FunMode { Off = 0, Flames = 1, Bubbles = 2, Confetti = 3, Disco = 4, All = 5 }
+
+public sealed partial class Sim
+{
+    public FunMode Fun = FunMode.Off;
+    bool HasFlames => Fun is FunMode.Flames or FunMode.All;
+    bool HasBubbles => Fun is FunMode.Bubbles or FunMode.All;
+    bool HasConfetti => Fun is FunMode.Confetti or FunMode.All;
+    bool HasDisco => Fun is FunMode.Disco or FunMode.All;
+
+    float flameT, flameCool = 2.5f, flameAcc, bubbleAcc, discoAcc, popBudget;
+    public float FlameLevel;     // 0...1, how hard the flamethrower is going right now
+    readonly List<Particle> popQueue = new();
+
+    /// The nozzle sits under the front bumper; the bubble gun under the bin lid at the back.
+    V2 Nozzle => Pos + Fwd * (R * 1.02f);
+    V2 BubbleGun => Pos - Fwd * (R * 0.95f);
+
+    void UpdateFun(float dt)
+    {
+        if (Fun == FunMode.Off || Paused) { FlameLevel = 0; return; }
+        popBudget = MathF.Min(4, popBudget + dt * 7);
+        var working = Phase is Phase.Cleaning or Phase.Hunting && !Picked;
+        if (HasFlames) UpdateFlames(dt, working);
+        if (HasBubbles && (working || Phase is Phase.Scanning or Phase.Returning)) UpdateBubbles(dt);
+        if (HasDisco) UpdateDisco(dt);
+    }
+
+    // MARK: Flamethrower
+
+    void UpdateFlames(float dt, bool working)
+    {
+        // Bursts: a second or so of fire, then a breather. Something right ahead sets it off early.
+        flameCool -= dt;
+        var target = false;
+        foreach (var it in Items)
+        {
+            if (!it.OnFloor) continue;
+            var d = it.Icon.Pos - Nozzle;
+            if (d.Len < R * 2.6f && d.Unit.Dot(Fwd) > 0.85f) { target = true; break; }
+        }
+        if (working && flameT <= 0 && (flameCool <= 0 || (target && flameCool < 1.6f)))
+        {
+            flameT = Rand(0.8f, 1.5f);
+            flameCool = Rand(2.2f, 4.2f);
+            Audio?.Flame(flameT);
+        }
+        if (flameT > 0 && working) flameT -= dt; else flameT = 0;
+        FlameLevel += ((flameT > 0 ? 1 : 0) - FlameLevel) * MathF.Min(1, dt * 12);
+        if (FlameLevel < 0.05f) return;
+
+        var sway = MathF.Sin(T * 5.3f) * 0.18f;
+        var dir = Fwd.Rotated(sway);
+        flameAcc += dt * 220 * FlameLevel;
+        while (flameAcc >= 1)
+        {
+            flameAcc -= 1;
+            var v = dir.Rotated(Rand(-0.2f, 0.2f)) * Rand(560, 860) + Fwd * V;
+            SpawnFun(PartKind.Fire, Nozzle + dir.Perp * Rand(-6, 6), v, Rand(0.45f, 0.75f), Rand(7, 12), 1, 0.85f, 0.4f, 1);
+        }
+        // Whatever is in the cone gets singed: darker, jittery, smoking.
+        foreach (var it in Items)
+        {
+            if (!it.OnFloor || it.Icon.Ingesting) continue;
+            var d = it.Icon.Pos - Nozzle; var l = d.Len;
+            if (l > R * 4.4f || l < 1) continue;
+            var cone = d.Unit.Dot(dir);
+            if (cone < 0.88f) continue;
+            var k = FlameLevel * (1 - l / (R * 4.4f));
+            it.Scorch = MathF.Min(1, it.Scorch + dt * 1.8f * k);
+            it.Icon.Agit = MathF.Max(it.Icon.Agit, 0.35f * k);
+            if (Rand() < dt * 10 * k) SpawnFun(PartKind.Smoke, it.Icon.Pos + new V2(Rand(-14, 14), Rand(-14, 14)), new V2(Rand(-20, 20), Rand(-40, -10)), Rand(0.9f, 1.6f), Rand(8, 14), 0.2f, 0.19f, 0.18f, 0.5f);
+        }
+    }
+
+    // MARK: Bubble gun
+
+    void UpdateBubbles(float dt)
+    {
+        bubbleAcc += dt * 9;
+        while (bubbleAcc >= 1)
+        {
+            bubbleAcc -= 1;
+            var v = (-Fwd).Rotated(Rand(-0.9f, 0.9f)) * Rand(60, 170);
+            SpawnFun(PartKind.Bubble, BubbleGun + Side * Rand(-R * 0.3f, R * 0.3f), v, Rand(2.5f, 5.5f), Rand(9, 24), 1, 1, 1, 1);
+        }
+    }
+
+    void PopBubble(Particle b)
+    {
+        for (int k = 0; k < 7; k++)
+        {
+            var a = Rand(0, 6.283f);
+            SpawnFun(PartKind.Glow, b.Pos + new V2(MathF.Cos(a), MathF.Sin(a)) * b.Size * 0.8f, new V2(MathF.Cos(a), MathF.Sin(a)) * Rand(40, 110), Rand(0.15f, 0.3f), Rand(1.2f, 2.2f), 0.8f, 0.95f, 1, 0.9f);
+        }
+        if (popBudget >= 1) { popBudget -= 1; Audio?.Pop(); }
+    }
+
+    // MARK: Confetti
+
+    void FunIngest(Item it)
+    {
+        if (HasConfetti) ConfettiBurst(Intake, 22, 320, Fwd, 1.2f);
+    }
+
+    void FunDone()
+    {
+        if (!HasConfetti) return;
+        // The dock's cannon: a big one, straight up the screen.
+        ConfettiBurst(DockPos + DockOut * (R * 0.4f), 160, 900, DockOut, 0.7f);
+        Audio?.Popper();
+    }
+
+    void ConfettiBurst(V2 at, int n, float speed, V2 dir, float spread)
+    {
+        for (int k = 0; k < n; k++)
+        {
+            var (r, g, b) = Hue(Rand());
+            var v = dir.Rotated(Rand(-spread, spread)) * Rand(speed * 0.35f, speed);
+            SpawnFun(PartKind.Confetti, at, v, Rand(2.2f, 4f), Rand(5, 9), r, g, b, 1, chip: 1);
+        }
+    }
+
+    // MARK: Disco
+
+    void UpdateDisco(float dt)
+    {
+        var (r, g, b) = Hue(T * 0.35f);
+        Led = new V3(r, g, b);
+        // A ring of coloured light every beat, out from the robot across the floor.
+        discoAcc += dt;
+        if (discoAcc < 0.5f) return;
+        discoAcc = 0;
+        var (cr, cg, cb) = Hue(T * 0.35f + 0.5f);
+        for (int k = 0; k < 28; k++)
+        {
+            var a = k / 28f * 6.283f;
+            var d = new V2(MathF.Cos(a), MathF.Sin(a));
+            SpawnFun(PartKind.Glow, Pos + d * R * 1.05f, d * 260, 0.9f, 3.2f, cr, cg, cb, 0.8f);
+        }
+    }
+
+    static (float r, float g, float b) Hue(float h)
+    {
+        h -= MathF.Floor(h);
+        float R6(float o) => M.Clamp(MathF.Abs((h * 6 + o) % 6 - 3) - 1, 0, 1);
+        return (R6(0), R6(4), R6(2));
+    }
+
+    // MARK: Particles
+
+    void SpawnFun(PartKind kind, V2 p, V2 vel, float life, float size, float r, float g, float b, float a, float chip = 0)
+    {
+        if (Particles.Count > 2300) Particles.RemoveRange(0, 100);
+        Particles.Add(new Particle { Pos = p, Vel = vel, Life = life, MaxLife = life, Size = size, R = r, G = g, B = b, A = a, Chip = chip, Ang = Rand(0, 6.28f), Kind = kind, Seed = Rand(0, 100) });
+    }
+
+    void MoveFunParticle(ref Particle q, float dt)
+    {
+        switch (q.Kind)
+        {
+            case PartKind.Fire:
+                q.Vel *= MathF.Exp(-dt * 2.6f);
+                break;
+            case PartKind.Smoke:
+                q.Vel *= MathF.Exp(-dt * 1.2f);
+                break;
+            case PartKind.Bubble:
+            {
+                // Drifts and wobbles; pops on an icon, nudging it, or on the robot.
+                q.Vel *= MathF.Exp(-dt * 0.55f);
+                q.Vel += new V2(MathF.Sin(T * 2.1f + q.Seed), MathF.Cos(T * 1.7f + q.Seed * 1.3f)) * (26 * dt);
+                if ((q.Pos - Pos).Len < R + q.Size * 0.5f && q.Life < q.MaxLife - 0.4f) { q.Life = 0; break; }
+                foreach (var it in Items)
+                {
+                    if (!it.OnFloor) continue;
+                    if ((it.Icon.Pos - q.Pos).Len < Metrics.IconHalf * 0.7f)
+                    {
+                        it.Icon.Vel += q.Vel * 0.25f;
+                        it.Icon.Agit = MathF.Max(it.Icon.Agit, 0.3f);
+                        q.Life = 0;
+                        break;
+                    }
+                }
+                break;
+            }
+            case PartKind.Confetti:
+                q.Vel *= MathF.Exp(-dt * 2.8f);
+                q.Ang += dt * (6 + q.Seed % 6);
+                break;
+            case PartKind.Glow:
+                q.Vel *= MathF.Exp(-dt * 1.5f);
+                break;
+        }
+        q.Pos += q.Vel * dt;
+    }
+}

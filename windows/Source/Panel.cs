@@ -87,7 +87,7 @@ public sealed class Panel : Window
         var m = model;
         return string.Join("|", m.Stage, m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied or Phase.PuttingBack or Phase.Leaving or Phase.Finished ? m.Phase.ToString() : "live",
             m.Paused, m.Note, m.Outcome, m.Mode, m.Source, m.ReviewOpen, m.Result?.Title, m.Result?.Detail, m.Applying, m.Support, m.SkipFinalClick, m.ClearWindows,
-            m.LastRun?.Id, m.DockScreen, m.SortBy, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
+            m.LastRun?.Id, m.DockScreen, m.Fun, m.SortBy, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
     }
 
     public void Refresh()
@@ -239,7 +239,7 @@ public sealed class Panel : Window
     static UIElement Segmented<T>(IList<(T value, string title)> options, T selected, Action<T> pick)
     {
         var outer = new Border { CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromArgb(22, 255, 255, 255)), Padding = new Thickness(2) };
-        var g = new UniformGrid { Rows = 1, Columns = options.Count };
+        var g = new UniformGrid { Rows = options.Count > 5 ? 2 : 1, Columns = options.Count > 5 ? (options.Count + 1) / 2 : options.Count };
         foreach (var (value, title) in options)
         {
             var on = EqualityComparer<T>.Default.Equals(value, selected);
@@ -377,6 +377,11 @@ public sealed class Panel : Window
             dockText.Margin = new Thickness(0, 7, 0, 0);
             body.Children.Add(Field("Station steht auf", Segmented(options, current, v => { m.DockScreen = v; m.Changed(); }), dockText));
         }
+        var funText = Text(FunBlurb);
+        funText.Margin = new Thickness(0, 7, 0, 0);
+        body.Children.Add(Field("Spaßmodus",
+            Segmented(new List<(FunMode, string)> { (FunMode.Off, "Aus"), (FunMode.Flames, "🔥 Feuer"), (FunMode.Bubbles, "🧼 Blasen"), (FunMode.Confetti, "🎉 Konfetti"), (FunMode.Disco, "🕺 Disco"), (FunMode.All, "Alles!") }, m.Fun, v => { m.Fun = v; m.Changed(); }),
+            funText));
         body.Children.Add(Switch("Fenster minimieren, damit ich zuschauen kann", m.ClearWindows, v => { m.ClearWindows = v; m.Changed(); }));
         if (m.Note != null) { var n = Text(m.Note, 12, new SolidColorBrush(Orange)); n.Margin = new Thickness(0, 0, 0, 12); body.Children.Add(n); }
         var start = Btn("Saugen starten", Kind.Primary, () => m.Start());
@@ -394,6 +399,16 @@ public sealed class Panel : Window
         var ft = Text(Footnote); Grid.SetColumn(ft, 1); foot.Children.Add(ft);
         body.Children.Add(foot);
     }
+
+    string FunBlurb => model.Fun switch
+    {
+        FunMode.Flames => "Ein Flammenwerfer vorne: Was im Weg liegt, wird angekokelt, bevor er es einsaugt. Nur zum Anschauen, deinen Dateien passiert nichts.",
+        FunMode.Bubbles => "Eine Seifenblasen-Pistole hinten. Die Blasen schweben übers Bild und platzen an deinen Symbolen.",
+        FunMode.Confetti => "Konfetti für jedes eingesaugte Symbol, und am Ende feuert die Station eine Konfetti-Kanone ab.",
+        FunMode.Disco => "Regenbogen-LEDs und bunte Lichtringe im Takt.",
+        FunMode.All => "Flammenwerfer, Seifenblasen, Konfetti und Disco auf einmal. Nur zum Anschauen, deinen Dateien passiert nichts.",
+        _ => "Der Roboter saugt ganz normal.",
+    };
 
     string ModeBlurb
     {
@@ -658,7 +673,7 @@ public static class PanelShot
         Settings.Persists = false;
         System.IO.Directory.CreateDirectory(dir);
         Model M() { var m = new Model(); m.Settings.SkipFinalClick = false; m.Settings.SupportCardShown = true; return m; }
-        var a = M(); a.Mode = CleanMode.Sort; One(a, System.IO.Path.Combine(dir, "panel_ready.png"));
+        var a = M(); a.Mode = CleanMode.Sort; a.Fun = FunMode.Flames; One(a, System.IO.Path.Combine(dir, "panel_ready.png"));
         var a2 = M(); a2.Source = Source.Real; a2.Mode = CleanMode.Hide; a2.LastRun = new FileOps.Run { Mode = "move", When = DateTime.Now, Items = new() { new(), new(), new() } };
         One(a2, System.IO.Path.Combine(dir, "panel_ready_real.png"));
         var e = DesktopReader.Sample(new V2(1536, 912));

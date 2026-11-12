@@ -53,6 +53,9 @@ public sealed unsafe class Synth : ISimAudio
         public void Tick() => s.Tick();
         public void Chirp(params (float f, float d)[] notes) => s.Chirp(notes);
         public void Thud(float amount) => s.Thud(amount);
+        public void Flame(float seconds) => s.Flame(seconds);
+        public void Pop() => s.Pop();
+        public void Popper() => s.Popper();
     }
 
     readonly List<Channel> channels = new();
@@ -85,6 +88,14 @@ public sealed unsafe class Synth : ISimAudio
         Enqueue(v.ToArray());
     }
     public void Thud(float a) => Enqueue(new Voice { Kind = 3, Dur = 0.26f, F0 = 118, F1 = 46, Amp = 0.85f * a }, new Voice { Kind = 1, Dur = 0.09f, F0 = 1400, F1 = 300, Amp = 0.26f * a });
+    public void Flame(float seconds) => Enqueue(new Voice { Kind = 4, Dur = seconds + 0.15f, Amp = 0.32f });
+    public void Pop() => Enqueue(new Voice { Kind = 5, Dur = 0.06f, F0 = R(1400, 2400), Amp = 0.07f });
+    /// A party popper: a crack, a hiss of paper, and a little fanfare.
+    public void Popper()
+    {
+        Enqueue(new Voice { Kind = 3, Dur = 0.12f, F0 = 300, F1 = 90, Amp = 0.6f }, new Voice { Kind = 1, Dur = 0.35f, F0 = 7000, F1 = 1500, Amp = 0.32f });
+        Chirp((523, 0.1f), (659, 0.1f), (784, 0.1f), (1047, 0.35f));
+    }
 
     float White() { noise ^= noise << 13; noise ^= noise >> 17; noise ^= noise << 5; return (int)noise / 2147483648f; }
 
@@ -161,6 +172,21 @@ public sealed unsafe class Synth : ISimAudio
                         var ff = v.F1 + (v.F0 - v.F1) * MathF.Pow(1 - pc, 3);
                         v.Lp += ff * dt;
                         s += MathF.Sin(v.Lp * twoPi) * MathF.Pow(1 - pc, 2) * v.Amp;
+                        break;
+                    }
+                    case 4: // flame: a roar of low noise with crackles on top
+                    {
+                        v.Lp += (n - v.Lp) * 0.06f;
+                        var env = MathF.Min(1, v.T * 25) * MathF.Min(1, (1 - pc) * 6);
+                        var crackle = White() > 0.985f ? White() * 1.4f : 0;
+                        s += (v.Lp * 2.6f + crackle) * env * v.Amp;
+                        break;
+                    }
+                    case 5: // pop: a tiny bright blip falling in pitch
+                    {
+                        var fr = v.F0 * (1 - 0.5f * pc);
+                        v.Lp += fr * dt;
+                        s += MathF.Sin(v.Lp * twoPi) * MathF.Pow(1 - pc, 3) * v.Amp;
                         break;
                     }
                 }

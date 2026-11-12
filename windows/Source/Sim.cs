@@ -55,6 +55,7 @@ public sealed class Item
     public float Land;
     public V2 Rest;
     public bool Protected;
+    public float Scorch;     // fun mode only: how burnt the flamethrower has made it look. Just a picture.
 
     public Item(int index, DesktopEntry entry)
     {
@@ -69,12 +70,16 @@ public sealed class Item
     public bool OnFloor => !InBin && !InDock && Flight == Flight.None && !Icon.Gone && !Protected;
 }
 
+public enum PartKind { Dust = 0, Fire = 1, Smoke = 2, Bubble = 3, Confetti = 4, Glow = 5 }
+
 public struct Particle
 {
     public V2 Pos, Vel;
     public float Life, MaxLife, Size;
     public float R, G, B, A;
     public float Chip, Ang;
+    public PartKind Kind;
+    public float Seed;
 }
 
 public interface ISimAudio
@@ -85,10 +90,13 @@ public interface ISimAudio
     void Tick();
     void Chirp(params (float f, float d)[] notes);
     void Thud(float amount);
+    void Flame(float seconds) { }
+    void Pop() { }
+    void Popper() { }
 }
 
 /// A straight port of the Mac simulation. Only the outcomes differ: nothing is deleted.
-public sealed class Sim
+public sealed partial class Sim
 {
     public readonly V2 Size;
     public readonly V2 WallMin, WallMax;
@@ -200,6 +208,7 @@ public sealed class Sim
         UpdatePhase(dt);
         IntegrateRobot(dt);
         UpdateItems(dt);
+        UpdateFun(dt);
         UpdateParticles(dt);
         Heavy *= MathF.Exp(-dt * 3);
         Bumper *= MathF.Exp(-dt * 7);
@@ -365,6 +374,7 @@ public sealed class Sim
                         Audio?.Chirp((784, 0.1f), (988, 0.1f), (1175, 0.1f), (1568, 0.3f));
                         SetPhase(Phase.Done);
                         OnDoneOnce?.Invoke(); OnDoneOnce = null;
+                        FunDone();
                         if (Mode == CleanMode.Tidy) StartTidy();
                         else if (SkipFinalClick) Discard(Mode);
                     }
@@ -624,6 +634,7 @@ public sealed class Sim
         if (icon)
         {
             if (it.LabelAttached) DetachLabel(it);
+            FunIngest(it);
             Audio?.Ingest(it.Mass);
             if (it.Mass > 3.4f) ClogEvents++;
             var c = it.Color;
@@ -898,7 +909,7 @@ public sealed class Sim
                     it.Flight = Flight.None; it.InDock = false; it.InBin = false;
                     it.Icon.Pos = it.FlightTo; it.Icon.Ang = 0; it.Icon.Vel = V2.Zero; it.Icon.Gone = false; it.Icon.Agit = 0; it.Icon.AngV = 0;
                     it.LabelAttached = true; it.Label.Gone = false; it.Label.Ingesting = false; it.Label.Pull = 0; it.LabelLost = 0;
-                    it.FlightScale = 1; it.Land = 1;
+                    it.FlightScale = 1; it.Land = 1; it.Scorch = 0;   // back home, as good as new
                     it.Rest = it.FlightTo;
                     tickBudget += 0.35f;
                     if (tickBudget > 1) { tickBudget = 0; Audio?.Tick(); }
@@ -1055,7 +1066,18 @@ public sealed class Sim
         {
             var q = Particles[i];
             q.Life -= dt;
-            if (q.Life <= 0) { Particles[i] = Particles[^1]; Particles.RemoveAt(Particles.Count - 1); continue; }
+            if (q.Life <= 0)
+            {
+                if (q.Kind == PartKind.Bubble) popQueue.Add(q);
+                Particles[i] = Particles[^1]; Particles.RemoveAt(Particles.Count - 1); continue;
+            }
+            if (q.Kind != PartKind.Dust)
+            {
+                // Fun-mode particles have their own physics and aren't sucked in.
+                MoveFunParticle(ref q, dt);
+                Particles[i] = q; i++;
+                continue;
+            }
             if (on)
             {
                 var d = intake - q.Pos; var l = d.Len;
@@ -1068,5 +1090,7 @@ public sealed class Sim
             Particles[i] = q;
             i++;
         }
+        foreach (var b in popQueue) PopBubble(b);
+        popQueue.Clear();
     }
 }

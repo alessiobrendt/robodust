@@ -64,6 +64,10 @@ RoboDust.exe --dump 4,8,12 --out C:\Temp\frames --plain-floor
 RoboDust.exe --read-test
 ```
 
+## Spaßmodus
+
+In den Einstellungen gibt es einen Spaßmodus: einen Flammenwerfer, der alles im Weg ankokelt, bevor der Roboter es einsaugt, eine Seifenblasen-Pistole, Konfetti für jedes Symbol und eine Konfetti-Kanone an der Station am Ende, Disco-Lichter, oder alles auf einmal. Das ist reine Show: Deinen Dateien passiert dadurch nichts, und ein angekokeltes Symbol sieht wieder ganz normal aus, sobald es zurück an seinem Platz ist.
+
 ## Mehrere Bildschirme
 
 Ein Roboter fährt über alle Bildschirme. RoboDust legt die Monitore so nebeneinander, wie sie bei dir stehen, und behandelt jeden als Raum einer Wohnung. Wo sich zwei Bildschirme berühren, ist eine Tür, durch die der Roboter hinüberfährt. Die Station steht auf dem Hauptbildschirm, oder auf dem Monitor, den du unter „Station steht auf“ auswählst. Dort startet der Roboter, und dorthin fährt er zum Entleeren. Monitore mit unterschiedlicher Skalierung sind kein Problem, und Win+D bringt RoboDust nicht aus dem Tritt.

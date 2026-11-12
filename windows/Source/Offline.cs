@@ -14,7 +14,7 @@ namespace RoboDust;
 public static unsafe class Offline
 {
     /// allScreens: the sample mess spread over every display, drawn as one picture of the whole floor.
-    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow, bool allScreens = false, int dock = -1)
+    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow, bool allScreens = false, int dock = -1, FunMode fun = FunMode.Off)
     {
         Directory.CreateDirectory(outDir);
         var screens = allScreens ? Screen.All() : new List<Screen> { Screen.Primary() };
@@ -33,7 +33,7 @@ public static unsafe class Offline
         var entries = DesktopReader.SampleAcross(screens);
         var sprites = Sprites.BuildNow(entries);
         r.SetSprites(sprites);
-        var s = new Sim(plan, entries) { Mode = mode, SkipFinalClick = true };
+        var s = new Sim(plan, entries) { Mode = mode, SkipFinalClick = true, Fun = fun };
         for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
 
         int W = (int)(size.X * pixelScale), H = (int)(size.Y * pixelScale);

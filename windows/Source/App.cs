@@ -158,6 +158,7 @@ public sealed class AppController
             var s = new Sim(plan, entries);
             for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
             s.Mode = m.Mode;
+            s.Fun = m.Fun;
             s.SkipFinalClick = false;   // handled here, so that it goes through the real file action
             s.RealRun = real;
             foreach (var it in s.Items)

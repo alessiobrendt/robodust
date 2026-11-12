@@ -122,19 +122,34 @@ void main() {
     public const string PartVS = Head + @"
 layout(location = 0) in vec4 p0;   // pos, size, ang
 layout(location = 1) in vec4 p1;   // colour
-layout(location = 2) in vec4 p2;   // chip
-out vec2 q; out vec4 color; out float chip;
+layout(location = 2) in vec4 p2;   // chip (0 dot, 1 paper chip, 2 soap bubble), glow
+out vec2 q; out vec4 color; out float chip; out float glow;
 void main() {
     q = kQuad[gl_VertexID]; float c = cos(p0.w), s = sin(p0.w);
-    vec2 l = q * p0.z; if (p2.x > .5) l.y *= .55;
+    vec2 l = q * p0.z; if (p2.x > .5 && p2.x < 1.5) l.y *= .55;
     gl_Position = toClip(p0.xy + vec2(c*l.x - s*l.y, s*l.x + c*l.y));
-    color = p1; chip = p2.x;
+    color = p1; chip = p2.x; glow = p2.y;
 }";
     public const string PartFS = Head + @"
-in vec2 q; in vec4 color; in float chip; out vec4 o;
+in vec2 q; in vec4 color; in float chip; in float glow; out vec4 o;
 void main() {
-    float a = chip > .5 ? 1.0 : smoothstep(1.0, .35, length(q));
-    o = vec4(color.rgb * color.a * a, color.a * a);
+    float r = length(q);
+    if (chip > 1.5) {
+        // A soap bubble from above: a thin rainbow rim, nearly clear inside, one bright window highlight.
+        if (r > 1.0) discard;
+        float rim = smoothstep(0.70, 0.94, r) * (1.0 - smoothstep(0.95, 1.0, r));
+        vec2 h = q - vec2(-0.34, -0.40);
+        float spec = exp(-dot(h, h) * 28.0);
+        vec3 film = 0.5 + 0.5 * cos(6.2831 * (r * 1.4 + atan(q.y, q.x) * 0.16 + vec3(0.0, 0.33, 0.67)));
+        vec3 col = mix(film, vec3(1.0), 0.35);
+        float a = (rim * 0.6 + 0.05 + spec * 0.85) * color.a;
+        o = vec4(col * a, a * 0.8);
+        return;
+    }
+    float a = chip > .5 ? 1.0 : smoothstep(1.0, .35, r);
+    float al = color.a * a;
+    // Glowing things add light instead of covering what's beneath them.
+    o = vec4(color.rgb * al, al * (1.0 - glow));
 }";
 
     // Lighting shared by robot and dock. Light comes from upper-left of the screen, always.
