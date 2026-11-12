@@ -41,7 +41,7 @@ public static unsafe class Offline
         foreach (var part in (look ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
         {
             var kv = part.Split('='); int.TryParse(kv.Length > 1 ? kv[1] : "1", out var v);
-            switch (kv[0]) { case "skin": lk.Skin = (RobotSkin)v; break; case "hat": lk.Hat = v; break; case "spoiler": lk.Spoiler = true; break; case "glow": lk.Glow = true; break; case "exhaust": lk.Exhaust = true; break; case "decal": lk.Decal = v; break; case "pet": lk.Pet = (PetKind)v; break; }
+            switch (kv[0]) { case "skin": lk.Skin = (RobotSkin)v; break; case "hat": lk.Hat = v; break; case "spoiler": lk.Spoiler = true; break; case "glow": lk.Glow = true; break; case "exhaust": lk.Exhaust = true; break; case "decal": lk.Decal = v; break; case "pet": lk.Pet = (PetKind)v; break; case "trail": lk.Trail = v; break; case "horn": lk.Horn = v; break; case "lightbar": lk.Lightbar = true; break; case "glowcolor": lk.GlowColor = v; break; }
         }
         s.Look = lk; r.Look = lk; s.Skin = lk.Skin;
         for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
