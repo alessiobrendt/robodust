@@ -225,7 +225,7 @@ uniform float radius; uniform float heading; uniform float lidar; uniform float 
 uniform vec4 led; uniform float alpha;
 uniform vec3 bodyCol; uniform vec3 plateCol; uniform float bodyGloss; uniform float bodyMetal; uniform float hat; uniform float ears;   // skins
 // Shop: hat kind, shell pattern, spoiler, decal, underglow colour (a > 0 when on), and time for anything that spins.
-uniform int hatKind; uniform int pattern; uniform float spoiler; uniform int decal; uniform vec4 glow; uniform float time;
+uniform int hatKind; uniform int pattern; uniform float spoiler; uniform int decal; uniform vec4 glow; uniform float time; uniform float lightbar;
 float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
 Mat plain(vec3 c, float gloss, float metal) { Mat m; m.albedo = c; m.gloss = gloss; m.metal = metal; m.emis = 0.0; m.emisColor = vec3(0.0); return m; }
@@ -304,6 +304,71 @@ bool hats(vec2 l, inout vec3 col) {
         col = mix(col, vec3(0.75, 0.78, 0.8), blade * 0.75);
         if (hr < 0.04) col = shade(domeN(hp, 0.04, 1.0), plain(vec3(0.95, 0.85, 0.2), 0.8, 0.6), 1.0);
         return hr < 0.25 || blade > 0.0;
+    }
+    if (hatKind == 7) {          // Viking helmet: a steel dome, a rim of rivets, two horns curving out to the sides
+        bool on = false;
+        for (int k = -1; k <= 1; k += 2) {
+            vec2 hc = hp - vec2(0.02, float(k) * 0.34);
+            float d = length(hc / vec2(0.07, 0.17));
+            if (d < 1.0) { col = shade(domeN(hc, 0.12, 1.2), plain(mix(vec3(0.95, 0.9, 0.78), vec3(0.7, 0.62, 0.48), abs(hc.y) / 0.17), 0.5, 0.0), 1.0); on = true; }
+        }
+        if (hr < 0.24) {
+            col = shade(domeN(hp, 0.24, 1.0), plain(vec3(0.6, 0.62, 0.66), 0.8, 0.9), 1.0);
+            float rivet = step(0.2, hr) * smoothstep(0.02, 0.01, length(vec2(hr - 0.215, fract(a / 6.2831 * 12.0) * 0.11 - 0.055)));
+            col = mix(col, vec3(0.9), rivet);
+            on = true;
+        }
+        return on;
+    }
+    if (hatKind == 8) {          // chef's hat: a puffy white top with soft folds
+        col *= 1.0 - 0.3 * smoothstep(0.36, 0.26, hr) * step(0.26, hr);
+        if (hr >= 0.26) return false;
+        float puff = 0.5 + 0.5 * cos(a * 6.0);
+        col = shade(normalize(vec3(toWorldDir(hp / max(hr, 1e-3)) * (hr / 0.26) * (0.6 + 0.3 * puff), 1.0)), plain(vec3(0.97), 0.1, 0.0), 1.0);
+        return true;
+    }
+    if (hatKind == 9) {          // wizard hat: a deep blue cone with stars and a moon
+        col *= 1.0 - 0.35 * smoothstep(0.4, 0.29, hr) * step(0.29, hr);
+        if (hr >= 0.29) return false;
+        col = shade(domeN(hp, 0.29, 2.2), plain(vec3(0.12, 0.1, 0.42), 0.4, 0.0), 1.0);
+        vec2 sc = floor(hp * 24.0);
+        float star = step(0.9, h21(sc)) * smoothstep(0.35, 0.0, length(fract(hp * 24.0) - 0.5));
+        col += vec3(1.0, 0.9, 0.4) * star * (0.7 + 0.3 * sin(time * 4.0 + h21(sc) * 20.0));
+        float moon = smoothstep(0.05, 0.04, length(hp - vec2(0.1, 0.08))) * (1.0 - smoothstep(0.045, 0.035, length(hp - vec2(0.12, 0.1))));
+        col = mix(col, vec3(1.0, 0.92, 0.5), moon);
+        return true;
+    }
+    if (hatKind == 10) {         // hard hat: a yellow shell with a ridge down the middle and a front peak
+        vec2 e = (hp - vec2(0.03, 0.0)) / vec2(0.3, 0.25);
+        float er = length(e);
+        col *= 1.0 - 0.35 * smoothstep(1.3, 1.0, er) * step(1.0, er);
+        if (er >= 1.0) return false;
+        col = shade(normalize(vec3(toWorldDir(e) * er * 1.1, 1.0)), plain(vec3(0.98, 0.78, 0.08), 0.6, 0.0), 1.0);
+        col *= 1.0 - 0.25 * smoothstep(0.03, 0.0, abs(hp.y)) * step(-0.2, hp.x);   // the ridge
+        return true;
+    }
+    if (hatKind == 11) {         // halo: a golden ring floating just above, glowing
+        float ring = smoothstep(0.03, 0.0, abs(hr - 0.24));
+        col *= 1.0 - 0.2 * smoothstep(0.06, 0.0, abs(length(hp - vec2(-0.03, -0.04)) - 0.24));   // its shadow, a little offset
+        col = mix(col, vec3(1.0, 0.9, 0.45) * (1.3 + 0.2 * sin(time * 3.0)), ring);
+        col += vec3(1.0, 0.85, 0.4) * smoothstep(0.1, 0.0, abs(hr - 0.24)) * 0.35;
+        return ring > 0.0;
+    }
+    if (hatKind == 12) {         // flower crown: a ring of little flowers in different colours
+        bool on = false;
+        for (int i = 0; i < 9; i++) {
+            float fa = float(i) * 0.6981;
+            vec2 fc = hp - vec2(cos(fa), sin(fa)) * 0.22;
+            float fr = length(fc), pa = atan(fc.y, fc.x);
+            float petal = 0.05 + 0.02 * cos(pa * 5.0 + float(i));
+            if (fr < petal) {
+                vec3 pc = i % 3 == 0 ? vec3(1.0, 0.45, 0.6) : i % 3 == 1 ? vec3(1.0, 0.92, 0.95) : vec3(0.7, 0.5, 1.0);
+                col = shade(domeN(fc, petal, 0.7), plain(fr < 0.018 ? vec3(1.0, 0.82, 0.2) : pc, 0.2, 0.0), 1.0);
+                on = true;
+            }
+        }
+        if (!on && abs(hr - 0.22) < 0.012) { col = vec3(0.2, 0.5, 0.15); on = true; }   // the stems between
+        return on;
     }
     return false;
 }
@@ -431,6 +496,33 @@ void main() {
         } else if (pattern == 4) { // neon: black with a glowing rim
             m.albedo = vec3(0.03); m.gloss = 0.6;
             m.emis = smoothstep(0.88, 0.97, rl) * (0.8 + 0.2 * sin(time * 4.0)); m.emisColor = vec3(0.1, 1.0, 0.85);
+        } else if (pattern == 5) { // zebra: wavy black stripes across white
+            float z = sin(l.x * 26.0 + sin(l.y * 7.0) * 2.2 + vn(l * 3.0) * 3.0);
+            m.albedo = z > 0.15 ? vec3(0.92) : vec3(0.05); m.gloss = 0.25;
+        } else if (pattern == 6) { // leopard: dark rosettes on gold
+            vec2 cell = floor(l * 6.0); vec2 f = fract(l * 6.0) - 0.5 - (vec2(h21(cell), h21(cell + 7.0)) - 0.5) * 0.4;
+            float d = length(f);
+            m.albedo = d < 0.17 ? vec3(0.55, 0.32, 0.12) : d < 0.27 ? vec3(0.12, 0.07, 0.03) : vec3(0.86, 0.62, 0.28); m.gloss = 0.2;
+        } else if (pattern == 7) { // wood: warm grain
+            float g = sin((l.x + vn(l * vec2(2.0, 12.0)) * 0.25) * 60.0) * 0.5 + 0.5;
+            m.albedo = mix(vec3(0.45, 0.26, 0.12), vec3(0.66, 0.42, 0.22), g); m.gloss = 0.35;
+        } else if (pattern == 8) { // marble: white with grey veins
+            float v = abs(sin(l.x * 6.0 + l.y * 3.0 + vn(l * 5.0) * 6.0));
+            m.albedo = mix(vec3(0.55, 0.56, 0.6), vec3(0.95, 0.95, 0.94), smoothstep(0.0, 0.25, v)); m.gloss = 0.85;
+        } else if (pattern == 9) { // rainbow: the colour wheel round the shell, turning slowly
+            float a = atan(l.y, l.x) / 6.2831 + time * 0.05;
+            m.albedo = 0.5 + 0.45 * cos(6.2831 * (a + vec3(0.0, 0.33, 0.67))); m.gloss = 0.5;
+        } else if (pattern == 10) { // lava: dark crust, glowing cracks
+            float n = vn(l * 6.0 + time * 0.15) + 0.5 * vn(l * 13.0);
+            float crack = smoothstep(0.06, 0.0, abs(n - 0.75));
+            m.albedo = vec3(0.08, 0.05, 0.04); m.gloss = 0.2;
+            m.emis = crack * (1.2 + 0.4 * sin(time * 3.0 + n * 10.0)); m.emisColor = vec3(1.0, 0.35, 0.05);
+        } else if (pattern == 11) { // ice: pale blue with frost and glints
+            float n = vn(l * 9.0);
+            m.albedo = mix(vec3(0.62, 0.8, 0.95), vec3(0.95, 0.98, 1.0), n); m.gloss = 1.0;
+            m.emis = step(0.993, h21(floor(l * 30.0))) * (0.5 + 0.5 * sin(time * 5.0 + h21(floor(l * 30.0)) * 30.0)); m.emisColor = vec3(1.0);
+        } else if (pattern == 12) { // police: navy and white halves
+            m.albedo = l.y > 0.0 ? vec3(0.05, 0.1, 0.3) : vec3(0.92); m.gloss = 0.5;
         }
         // Decals over the paint.
         if (decal == 1 && abs(abs(l.y) - 0.11) < 0.04) m.albedo = vec3(0.95, 0.95, 0.97);               // racing stripes
@@ -486,6 +578,17 @@ void main() {
             } else {
                 col *= 1.0 - 0.3 * smoothstep(1.35, 1.0, d);   // a soft shadow round the ear
             }
+        }
+    }
+    // Blue lights: red and blue at the front corners, flashing in turn.
+    if (lightbar > 0.5) {
+        for (int k = -1; k <= 1; k += 2) {
+            vec2 lp = l - vec2(0.6, float(k) * 0.5);
+            float d = length(lp / vec2(0.07, 0.13));
+            bool lit = (k < 0) == (fract(time * 2.5) < 0.5);
+            vec3 lc = k < 0 ? vec3(1.0, 0.12, 0.1) : vec3(0.15, 0.35, 1.0);
+            if (d < 1.0) col = mix(col, lc * (lit ? 1.7 : 0.3), 0.92);
+            col += lc * exp(-d * d * 0.6) * (lit ? 0.5 : 0.0);
         }
     }
     // Grounding: the rim rolls off a touch into its own shadow.

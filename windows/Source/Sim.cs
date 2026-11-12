@@ -576,7 +576,7 @@ public sealed partial class Sim
             if (l < R + 20 && d.Dot(Fwd) > 0 && T - LastBump > 1.2f)
             {
                 LastBump = T;
-                Bumper = 1; Audio?.Thud(0.3f); Audio?.Chirp((494, 0.07f), (392, 0.09f));
+                Bumper = 1; Audio?.Thud(0.3f); Honk();
                 maneuver = (0.32f, 0.45f, d.Dot(Side) > 0 ? -1 : 1);
                 return;
             }
@@ -584,7 +584,7 @@ public sealed partial class Sim
         if (Cat is { } c && T - LastBump > 1.2f && c.RobotContact(this))
         {
             LastBump = T;
-            Bumper = 1; Audio?.Thud(0.3f); Audio?.Chirp((494, 0.07f), (392, 0.09f));
+            Bumper = 1; Audio?.Thud(0.3f); Honk();
             maneuver = (0.34f, 0.5f, (c.Pos - Pos).Dot(Side) > 0 ? -1 : 1);
             return;
         }

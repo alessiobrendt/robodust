@@ -85,7 +85,7 @@ Auf der Startseite steht, was RoboDust bisher geschafft hat, und „Ablage“ ze
 
 ## Shop
 
-Für jede aufgeräumte Datei gibt es eine Münze, und beim Aufräumen liegen Münzen auf dem Desktop (fünf pro Stück), die der Roboter mit einsaugt. Im **Shop** gibt es dafür Skins (Carbon, Chrom, Tarnmuster, Neon, Galaxie), Hüte (Krone, Zylinder, Cowboyhut, Weihnachtsmütze, Propellermütze), Tuning (Heckspoiler, Rennstreifen, Flammen-Lackierung, Neon-Unterboden, Auspuff-Flammen) und Haustiere, die hinter dem Roboter herlaufen (Dackel, Golden Retriever, Kater, Eichhörnchen). Oben im Shop dreht sich der Roboter in einer Live-Vorschau; ein Klick auf ein Teil probiert es an, ohne es zu kaufen.
+Für jede aufgeräumte Datei gibt es eine Münze, und beim Aufräumen liegen Münzen auf dem Desktop (fünf pro Stück), die der Roboter mit einsaugt. Im **Shop** gibt es dafür 19 Skins (von Carbon und Chrom über Zebra, Holz und Marmor bis Lava, Eis und Galaxie), 12 Hüte (vom Partyhut bis zum Heiligenschein), Tuning (Heckspoiler, Rennstreifen, Flammen-Lackierung, Unterboden in vier Farben, Auspuff-Flammen, Spuren aus Rauch, Glitzer oder Regenbogen, Blaulicht und Hupen) und 8 Haustiere, die hinter dem Roboter herlaufen (Dackel, Golden Retriever, Kater, Eichhörnchen, Fuchs, Hase, Pinguin, Entenküken). Oben im Shop dreht sich der Roboter in einer Live-Vorschau; ein Klick auf ein Teil probiert es an, ohne es zu kaufen.
 
 Münzen geben (oder mit Minus nehmen), auch während RoboDust läuft:
 

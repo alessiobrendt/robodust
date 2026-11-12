@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace RoboDust;
 
-public enum PetKind { None = 0, Dachshund = 1, Golden = 2, Cat = 3, Squirrel = 4 }
+public enum PetKind { None = 0, Dachshund = 1, Golden = 2, Cat = 3, Squirrel = 4, Fox = 5, Bunny = 6, Penguin = 7, Duck = 8 }
 public enum ShopCategory { Skins, Hats, Tuning, Pets }
 
 /// Everything the robot is wearing: what the renderer draws and the preview shows.
@@ -15,11 +15,16 @@ public struct Look
     public bool Spoiler, Glow, Exhaust;
     public int Decal;        // 0 none, 1 racing stripes, 2 flames
     public PetKind Pet;
+    public int GlowColor;    // 0 blue, 1 pink, 2 green, 3 rainbow
+    public int Trail;        // 0 none, 1 rainbow, 2 smoke, 3 glitter
+    public bool Lightbar;
+    public int Horn;         // 0 beep, 1 fanfare, 2 cucaracha, 3 train
 
     public static Look Of(Settings s) => new()
     {
         Skin = (RobotSkin)s.Skin, Hat = s.HatKind != 0 ? s.HatKind : (s.Hat ? 1 : 0),
         Spoiler = s.Spoiler, Glow = s.Glow, Exhaust = s.Exhaust, Decal = s.Decal, Pet = (PetKind)s.Pet,
+        GlowColor = s.GlowColor, Trail = s.Trail, Lightbar = s.Lightbar, Horn = s.Horn,
     };
 }
 
@@ -57,6 +62,14 @@ public static class Shop
         Skin(RobotSkin.Neon, "Neon", "💡", 250, "Schwarz mit leuchtendem Rand.");
         Skin(RobotSkin.Chrome, "Chrom", "🪞", 300, "Spiegelt das ganze Zimmer.");
         Skin(RobotSkin.Galaxy, "Galaxie", "🌌", 400, "Ein Nebel und funkelnde Sterne.");
+        Skin(RobotSkin.Wood, "Holz", "🪵", 100, "Warmes Nussbaum-Furnier.");
+        Skin(RobotSkin.Zebra, "Zebra", "🦓", 140, "Kein Streifen wie der andere.");
+        Skin(RobotSkin.Leopard, "Leopard", "🐆", 160, "Fleckig und flink.");
+        Skin(RobotSkin.Police, "Polizei", "🚓", 180, "Blau-weiß. Am besten mit Blaulicht.");
+        Skin(RobotSkin.Marble, "Marmor", "🏛", 220, "Poliert wie im Museum.");
+        Skin(RobotSkin.Ice, "Eis", "🧊", 260, "Frostig, mit funkelnden Kristallen.");
+        Skin(RobotSkin.Rainbow, "Regenbogen", "🌈", 350, "Das ganze Farbrad, das sich langsam dreht.");
+        Skin(RobotSkin.Lava, "Lava", "🌋", 450, "Dunkle Kruste, glühende Risse.");
 
         void Hat(int kind, string name, string emoji, int price, string blurb) => list.Add(new ShopItem
         {
@@ -69,6 +82,12 @@ public static class Shop
         Hat(4, "Cowboyhut", "🤠", 200, "Yeehaw.");
         Hat(6, "Propellermütze", "🧢", 250, "Der Propeller dreht sich wirklich.");
         Hat(2, "Krone", "👑", 300, "Gold, mit Edelsteinen.");
+        Hat(8, "Kochmütze", "👨‍🍳", 90, "Für den Desktop-Eintopf.");
+        Hat(10, "Bauhelm", "⛑", 110, "Sicherheit geht vor.");
+        Hat(12, "Blumenkranz", "🌸", 160, "Neun kleine Blüten im Kreis.");
+        Hat(7, "Wikingerhelm", "🪓", 280, "Mit Hörnern. Historisch ungenau.");
+        Hat(9, "Zauberhut", "🧙", 320, "Mit Sternen, die funkeln, und einem Mond.");
+        Hat(11, "Heiligenschein", "😇", 500, "Schwebt und leuchtet. Für sehr brave Roboter.");
 
         void Tune(string id, string name, string emoji, int price, string blurb, Func<Look, Look> wear, Func<Look, bool> worn, Func<Look, Look> off) => list.Add(new ShopItem
         {
@@ -80,10 +99,23 @@ public static class Shop
             l => { l.Decal = 2; return l; }, l => l.Decal == 2, l => { l.Decal = 0; return l; });
         Tune("spoiler", "Heckspoiler", "🪽", 150, "Roter Flügel am Heck, für mehr Anpressdruck.",
             l => { l.Spoiler = true; return l; }, l => l.Spoiler, l => { l.Spoiler = false; return l; });
-        Tune("glow", "Neon-Unterboden", "🟦", 200, "Leuchtet blau auf den Boden.",
-            l => { l.Glow = true; return l; }, l => l.Glow, l => { l.Glow = false; return l; });
+        Tune("glow", "Unterboden Blau", "🟦", 200, "Leuchtet blau auf den Boden.",
+            l => { l.Glow = true; l.GlowColor = 0; return l; }, l => l.Glow && l.GlowColor == 0, l => { l.Glow = false; return l; });
         Tune("exhaust", "Auspuff-Flammen", "💨", 250, "Spuckt Flammen, wenn er Gas gibt.",
             l => { l.Exhaust = true; return l; }, l => l.Exhaust, l => { l.Exhaust = false; return l; });
+
+        // Underglow in more colours: each is its own item, and they replace each other.
+        foreach (var (c, name, emoji, price) in new[] { (1, "Unterboden Pink", "🩷", 220), (2, "Unterboden Grün", "💚", 220), (3, "Unterboden Regenbogen", "🌈", 380) })
+            Tune("glow" + c, name, emoji, price, "Leuchtet auf den Boden.",
+                l => { l.Glow = true; l.GlowColor = c; return l; }, l => l.Glow && l.GlowColor == c, l => { l.Glow = false; l.GlowColor = 0; return l; });
+        // Trails it leaves behind as it drives.
+        foreach (var (t, name, emoji, price, blurb) in new[] { (2, "Rauchspur", "💨", 140, "Eine Spur aus weißem Rauch."), (3, "Glitzerspur", "✨", 200, "Glitzert, wo er langfährt."), (1, "Regenbogenspur", "🌈", 300, "Ein Regenbogen hinter ihm her.") })
+            Tune("trail" + t, name, emoji, price, blurb, l => { l.Trail = t; return l; }, l => l.Trail == t, l => { l.Trail = 0; return l; });
+        Tune("lightbar", "Blaulicht", "🚨", 260, "Rot und blau, abwechselnd blinkend.",
+            l => { l.Lightbar = true; return l; }, l => l.Lightbar, l => { l.Lightbar = false; return l; });
+        // Horns: what it plays when it bumps into something.
+        foreach (var (h, name, emoji, price, blurb) in new[] { (1, "Hupe: Fanfare", "🎺", 120, "Tätärätä, wenn er wo anstößt."), (3, "Hupe: Zug", "🚂", 150, "Tuut tuut."), (2, "Hupe: La Cucaracha", "🎵", 220, "Die Melodie, die jeder kennt.") })
+            Tune("horn" + h, name, emoji, price, blurb, l => { l.Horn = h; return l; }, l => l.Horn == h, l => { l.Horn = 0; return l; });
 
         void Pet(PetKind p, string name, string emoji, int price, string blurb) => list.Add(new ShopItem
         {
@@ -94,6 +126,10 @@ public static class Shop
         Pet(PetKind.Dachshund, "Dackel", "🌭", 300, "Lang, treu, bellt gern.");
         Pet(PetKind.Cat, "Kater", "🐈", 300, "Rot getigert. Läuft mit, wenn er Lust hat.");
         Pet(PetKind.Golden, "Golden Retriever", "🦮", 350, "Freut sich über jede Datei.");
+        Pet(PetKind.Duck, "Entenküken", "🐤", 200, "Watschelt treu hinterher.");
+        Pet(PetKind.Bunny, "Hase", "🐰", 280, "Hoppelt mit langen Ohren.");
+        Pet(PetKind.Fox, "Fuchs", "🦊", 380, "Schlau, mit weißer Schwanzspitze.");
+        Pet(PetKind.Penguin, "Pinguin", "🐧", 420, "Watschelt im Frack.");
         return list;
     }
 
@@ -117,5 +153,6 @@ public static class Shop
     {
         s.Skin = (int)l.Skin; s.HatKind = l.Hat; s.Hat = l.Hat == 1;
         s.Spoiler = l.Spoiler; s.Glow = l.Glow; s.Exhaust = l.Exhaust; s.Decal = l.Decal; s.Pet = (int)l.Pet;
+        s.GlowColor = l.GlowColor; s.Trail = l.Trail; s.Lightbar = l.Lightbar; s.Horn = l.Horn;
     }
 }

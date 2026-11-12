@@ -29,7 +29,19 @@ public sealed partial class Sim
     public readonly List<Coin> Coins = new();
     public int CoinsPicked;
     bool coinsDropped;
-    float exhaustAcc;
+    float exhaustAcc, trailAcc;
+
+    /// What it plays when it bumps into something: a beep, or a horn from the shop.
+    void Honk()
+    {
+        switch (Look.Horn)
+        {
+            case 1: Audio?.Chirp((523, 0.08f), (659, 0.08f), (784, 0.08f), (1047, 0.25f)); break;
+            case 2: Audio?.Chirp((392, 0.09f), (392, 0.09f), (392, 0.09f), (523, 0.2f), (659, 0.28f)); break;
+            case 3: Audio?.Chirp((311, 0.28f), (370, 0.4f)); break;
+            default: Audio?.Chirp((494, 0.07f), (392, 0.09f)); break;
+        }
+    }
 
     /// What this run earns in the shop: one coin per file RoboDust itself took, five per coin picked up.
     public int CoinsEarned => Math.Max(0, OwnScore) + CoinsPicked * 5;
@@ -38,6 +50,35 @@ public sealed partial class Sim
     {
         UpdatePet(dt);
         UpdateCoins(dt);
+        // Trails from the shop, left behind as it drives.
+        if (Look.Trail != 0 && !Picked && MathF.Abs(V) > 40 && Phase is not (Phase.Dropping or Phase.Leaving or Phase.Finished))
+        {
+            trailAcc += dt * (Look.Trail == 3 ? 40 : 30);
+            while (trailAcc >= 1)
+            {
+                trailAcc -= 1;
+                var at = Pos - Fwd * (R * 0.9f) + Side * Rand(-R * 0.6f, R * 0.6f);
+                switch (Look.Trail)
+                {
+                    case 1:   // rainbow: bands of colour, slowly fading where it went
+                    {
+                        var s = Rand(-1, 1);
+                        var (r, g, b) = Hue(0.5f + s * 0.5f * 0.85f);
+                        SpawnFun(PartKind.Glow, Pos - Fwd * (R * 0.9f) + Side * (s * R * 0.6f), V2.Zero, 1.6f, 7, r, g, b, 0.35f);
+                        break;
+                    }
+                    case 2:   // smoke
+                        SpawnFun(PartKind.Smoke, at, -Fwd * Rand(20, 60) + new V2(Rand(-15, 15), Rand(-15, 15)), Rand(1.2f, 2), Rand(9, 14), 0.85f, 0.85f, 0.87f, 0.35f);
+                        break;
+                    default:  // glitter
+                    {
+                        var (r, g, b) = Rand() < 0.5f ? (1f, 0.9f, 0.5f) : (0.85f, 0.95f, 1f);
+                        SpawnFun(PartKind.Glow, at, new V2(Rand(-10, 10), Rand(-10, 10)), Rand(0.5f, 1.1f), Rand(1.2f, 2.4f), r, g, b, 1);
+                        break;
+                    }
+                }
+            }
+        }
         // Exhaust flames: a few licks of fire out of the back whenever it puts its foot down.
         if (Look.Exhaust && !Picked && MathF.Abs(V) > 60)
         {

@@ -581,7 +581,7 @@ public sealed class Panel : Window
                 selected || worn ? new SolidColorBrush(selected ? Accent : Color.FromArgb(90, Accent.R, Accent.G, Accent.B)) : null,
                 new SolidColorBrush(Color.FromArgb(34, 255, 255, 255)));
             var item = it;
-            b.Click += (_, _) => { tryItem = item; Redraw(); };
+            b.Click += (_, _) => { tryItem = item; Redraw(); if (item.Id.StartsWith("tune:horn")) PlayHorn(item); };
             grid.Children.Add(b);
         }
         body.Children.Add(grid);
@@ -608,6 +608,26 @@ public sealed class Panel : Window
 
     /// A little "kaching" when something is bought. Uses the system sound, so it works without a run.
     static void Chime() { try { System.Media.SystemSounds.Asterisk.Play(); } catch { } }
+
+    /// Plays a horn from the shop, to hear it before buying.
+    static Synth hornSynth;
+    static System.Windows.Threading.DispatcherTimer hornStop;
+    static void PlayHorn(ShopItem it)
+    {
+        hornSynth ??= new Synth();
+        hornSynth.StartLive();
+        var notes = it.Id switch
+        {
+            "tune:horn1" => new (float, float)[] { (523, 0.08f), (659, 0.08f), (784, 0.08f), (1047, 0.25f) },
+            "tune:horn2" => new (float, float)[] { (392, 0.09f), (392, 0.09f), (392, 0.09f), (523, 0.2f), (659, 0.28f) },
+            _ => new (float, float)[] { (311, 0.28f), (370, 0.4f) },
+        };
+        hornSynth.Chirp(notes);
+        hornStop ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1.6) };
+        hornStop.Tick -= StopHorn; hornStop.Tick += StopHorn;
+        hornStop.Stop(); hornStop.Start();
+    }
+    static void StopHorn(object s, EventArgs e) { hornStop.Stop(); hornSynth?.StopLive(); }
 
     // MARK: - Shelf page
 
@@ -952,7 +972,7 @@ public static class PanelShot
         One(f, System.IO.Path.Combine(dir, "panel_result.png"));
         var g = M(); g.Page = Page.Settings; g.Fun = FunMode.Plow; g.Settings.Skin = 2; g.Settings.Hat = true; g.Settings.Schedule = 2; g.Settings.MinAgeDays = 7;
         One(g, System.IO.Path.Combine(dir, "panel_settings.png"));
-        var sh = M(); sh.Page = Page.Shop; sh.Settings.Coins = 420; sh.Settings.HatKind = 2; sh.Settings.Spoiler = true; sh.Settings.Glow = true; sh.Settings.Decal = 2; sh.Settings.Skin = 7; sh.Settings.Pet = 1; sh.Settings.Exhaust = true;
+        var sh = M(); sh.Page = Page.Shop; sh.Settings.Coins = 420; sh.Settings.HatKind = 2; sh.Settings.Spoiler = true; sh.Settings.Glow = true; sh.Settings.Decal = 2; sh.Settings.Skin = 7; sh.Settings.Pet = 7; sh.Settings.Exhaust = true; sh.Settings.Lightbar = true; sh.Settings.HatKind = 7; sh.Settings.Skin = 16;
         One(sh, System.IO.Path.Combine(dir, "panel_shop.png"));
         var h = M(); h.Settings.Stats = new Stats { Runs = 12, Items = 312, Bytes = 14_200_000_000, Meters = 1234, Kinds = new() { ["Bilder"] = 120, ["Dokumente"] = 80 } };
         One(h, System.IO.Path.Combine(dir, "panel_stats.png"));

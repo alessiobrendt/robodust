@@ -29,7 +29,7 @@ public sealed class Stats
 }
 
 public enum Page { Main, Settings, Shelf, Shop }
-public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4, Squirrel = 5, Carbon = 6, Chrome = 7, Camo = 8, Galaxy = 9, Neon = 10 }
+public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4, Squirrel = 5, Carbon = 6, Chrome = 7, Camo = 8, Galaxy = 9, Neon = 10, Zebra = 11, Leopard = 12, Wood = 13, Marble = 14, Rainbow = 15, Lava = 16, Ice = 17, Police = 18 }
 
 public sealed class RunResult
 {
@@ -67,6 +67,10 @@ public sealed class Settings
     public bool Glow { get; set; }             // neon underglow
     public bool Exhaust { get; set; }          // exhaust flames
     public int Pet { get; set; }               // PetKind
+    public int GlowColor { get; set; }         // 0 blue, 1 pink, 2 green, 3 rainbow
+    public int Trail { get; set; }             // 0 none, 1 rainbow, 2 smoke, 3 glitter
+    public bool Lightbar { get; set; }
+    public int Horn { get; set; }              // 0 beep, 1 fanfare, 2 cucaracha, 3 train
     public Stats Stats { get; set; } = new();
 
     public static bool Persists = true;
