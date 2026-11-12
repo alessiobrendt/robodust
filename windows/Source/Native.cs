@@ -207,6 +207,21 @@ public static class Native
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
     [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr hmon, int type, out uint dpiX, out uint dpiY);
 
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromRect(ref RECT r, uint flags);
+
+    /// Scale of the display with these bounds: 1.0 at 96 dpi, 1.5 at 144.
+    public static float ScaleOf(System.Drawing.Rectangle bounds)
+    {
+        try
+        {
+            var r = new RECT { Left = bounds.Left, Top = bounds.Top, Right = bounds.Right, Bottom = bounds.Bottom };
+            var mon = MonitorFromRect(ref r, 2);
+            if (GetDpiForMonitor(mon, 0, out var x, out _) == 0) return x / 96f;
+        }
+        catch { }
+        return PrimaryScale();
+    }
+
     public static string ClassOf(IntPtr hwnd) { var sb = new StringBuilder(256); GetClassName(hwnd, sb, 256); return sb.ToString(); }
 
     /// Scale of the primary monitor: 1.0 at 96 dpi, 1.5 at 144.

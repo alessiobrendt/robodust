@@ -15,7 +15,7 @@ public sealed unsafe class Renderer
         readonly Dictionary<string, int> locs = new();
         public Prog(string vs, string fs) { Id = Gl.Program(vs, fs); }
         public int this[string n] { get { if (!locs.TryGetValue(n, out var l)) { l = Gl.Loc(Id, n); locs[n] = l; } return l; } }
-        public void Use(V2 viewport) { Gl.UseProgram(Id); Gl.Uniform2f(this["viewport"], viewport.X, viewport.Y); }
+        public void Use(V2 viewport, V2 origin) { Gl.UseProgram(Id); Gl.Uniform2f(this["viewport"], viewport.X, viewport.Y); Gl.Uniform2f(this["origin"], origin.X, origin.Y); }
         public void F(string n, float v) => Gl.Uniform1f(this[n], v);
         public void F2(string n, V2 v) => Gl.Uniform2f(this[n], v.X, v.Y);
         public void F2(string n, float x, float y) => Gl.Uniform2f(this[n], x, y);
@@ -35,9 +35,13 @@ public sealed unsafe class Renderer
     float[] inst = new float[InstFloats * 4096];
     readonly float[] parts = new float[PartFloats * 2600];
 
-    public Renderer(V2 sizePts)
+    /// This display's top-left in the shared world, and how far the lidar sweep reaches across all of them.
+    public V2 Origin;
+    public float LidarRadius;
+
+    public Renderer(V2 sizePts, V2 origin = default)
     {
-        SizePts = sizePts;
+        SizePts = sizePts; Origin = origin; LidarRadius = MathF.Max(sizePts.X, sizePts.Y) * 0.85f;
         pBg = new Prog(Shaders.BgVS, Shaders.BgFS);
         pSprite = new Prog(Shaders.SpriteVS, Shaders.SpriteFS);
         pPart = new Prog(Shaders.PartVS, Shaders.PartFS);
@@ -243,7 +247,7 @@ public sealed unsafe class Renderer
 
         // Wallpaper.
         Gl.Disable(Gl.BLEND);
-        pBg.Use(SizePts);
+        pBg.Use(SizePts, Origin);
         Gl.BindVertexArray(emptyVao);
         Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, wall);
         Gl.ActiveTexture(Gl.TEXTURE0 + 1); Gl.BindTexture(Gl.TEXTURE_2D, track);
@@ -262,9 +266,9 @@ public sealed unsafe class Renderer
         // Lidar sweep sits on the floor, under the robot.
         if (sim.ScanActive > 0.01f)
         {
-            pLidar.Use(SizePts);
+            pLidar.Use(SizePts, Origin);
             Gl.BindVertexArray(emptyVao);
-            pLidar.F2("center", sim.Pos); pLidar.F("radius", MathF.Max(SizePts.X, SizePts.Y) * 0.85f);
+            pLidar.F2("center", sim.Pos); pLidar.F("radius", LidarRadius);
             pLidar.F("angle", -M.Pi / 2 + sim.ScanSweep); pLidar.F("alpha", sim.ScanActive);
             Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
         }
@@ -292,7 +296,7 @@ public sealed unsafe class Renderer
         Gl.BindBuffer(Gl.ARRAY_BUFFER, instBuf);
         Gl.BufferData(Gl.ARRAY_BUFFER, inst.Length * 4, null, Gl.STREAM_DRAW);
         fixed (float* p = inst) Gl.BufferSubData(Gl.ARRAY_BUFFER, 0, count * InstFloats * 4, p);
-        pSprite.Use(SizePts);
+        pSprite.Use(SizePts, Origin);
         Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D_ARRAY, tex);
         pSprite.I("tex", 0);
         if (shadows)
@@ -306,7 +310,7 @@ public sealed unsafe class Renderer
 
     void Shadow(V2 center, float radius, float strength, V2 offset, float blur, float kind, V2 halfBox)
     {
-        pShadow.Use(SizePts);
+        pShadow.Use(SizePts, Origin);
         Gl.BindVertexArray(emptyVao);
         pShadow.F2("center", center); pShadow.F("radius", radius); pShadow.F("strength", strength); pShadow.F2("offset", offset);
         pShadow.F("blur", blur); pShadow.F("kind", kind); pShadow.F2("halfBox", halfBox); pShadow.F("angle", 0);
@@ -327,7 +331,7 @@ public sealed unsafe class Renderer
         var height = 1 - bounce;
         Shadow(towerC, R * 0.3f, 0.44f * alpha * (1 - height * 0.6f), new V2(5, 8) + new V2(40, 70) * height, 20 + height * 40, 1, new V2(R * 1.3f, R * 1.02f));
 
-        pDock.Use(SizePts);
+        pDock.Use(SizePts, Origin);
         Gl.BindVertexArray(emptyVao);
         pDock.F2("center", center); pDock.F2("half_", R * 1.36f, R * 2.14f);
         pDock.F("radius", R); pDock.F("alpha", alpha); pDock.F("bag", sim.BagFill); pDock.F("glow", sim.BagGlow); pDock.F("ledPulse", sim.LedPulse);
@@ -355,7 +359,7 @@ public sealed unsafe class Renderer
         Gl.BindBuffer(Gl.ARRAY_BUFFER, partBuf);
         Gl.BufferData(Gl.ARRAY_BUFFER, parts.Length * 4, null, Gl.STREAM_DRAW);
         fixed (float* p = parts) Gl.BufferSubData(Gl.ARRAY_BUFFER, 0, n * PartFloats * 4, p);
-        pPart.Use(SizePts);
+        pPart.Use(SizePts, Origin);
         Gl.DrawArraysInstanced(Gl.TRIANGLES, 0, 6, n);
     }
 
@@ -377,7 +381,7 @@ public sealed unsafe class Renderer
         Shadow(pos, R * 0.985f, 0.30f * (1 - height * 0.5f) * alpha, new V2(10, 16) + new V2(34, 58) * height, 26 + 34 * height, 0, V2.Zero);
         // Side brushes reach out from under the shell.
         var (l, r) = sim.BrushCenters;
-        pBrush.Use(SizePts);
+        pBrush.Use(SizePts, Origin);
         Gl.BindVertexArray(emptyVao);
         for (int i = 0; i < 2; i++)
         {
@@ -386,7 +390,7 @@ public sealed unsafe class Renderer
             pBrush.F("speed", sim.BrushSpeed); pBrush.F("alpha", alpha); pBrush.F("sign_", i == 0 ? 1 : -1);
             Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
         }
-        pRobot.Use(SizePts);
+        pRobot.Use(SizePts, Origin);
         pRobot.F2("center", pos); pRobot.F("radius", R); pRobot.F2("shake", shakeP);
         pRobot.F("heading", sim.Heading); pRobot.F("lidar", sim.LidarAngle); pRobot.F("bumper", sim.Bumper); pRobot.F("ledPulse", sim.LedPulse);
         pRobot.F4("led", sim.Led.X, sim.Led.Y, sim.Led.Z, 1); pRobot.F("alpha", alpha);
@@ -407,7 +411,7 @@ public sealed unsafe class Renderer
             Gl.BlendEquation(Gl.FUNC_REVERSE_SUBTRACT);
             Gl.BlendFunc(Gl.ONE, Gl.ONE);
             Gl.ColorMask(1, 0, 0, 0);
-            pFade.Use(SizePts); pFade.F("amount", 1 / 255f);
+            pFade.Use(SizePts, Origin); pFade.F("amount", 1 / 255f);
             Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
             Gl.ColorMask(1, 1, 1, 1);
             Gl.BlendEquation(Gl.FUNC_ADD);
@@ -421,7 +425,7 @@ public sealed unsafe class Renderer
             var from = lastStamp ?? sim.Pos;
             var segLen = (sim.Pos - from).Len;
             Gl.Disable(Gl.BLEND);
-            pStamp.Use(SizePts);
+            pStamp.Use(SizePts, Origin);
             pStamp.F2("center", (from + sim.Pos) * 0.5f - sim.Fwd * (sim.R * 0.2f)); pStamp.F2("half_", segLen * 0.5f + 8, sim.R * 0.86f);
             pStamp.F("angle", sim.Heading); pStamp.F("dir", dir);
             Gl.DrawArrays(Gl.TRIANGLES, 0, 6);

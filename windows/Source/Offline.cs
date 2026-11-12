@@ -13,22 +13,27 @@ namespace RoboDust;
 /// so nothing from the real desktop can end up in a frame. For checking motion and looks.
 public static unsafe class Offline
 {
-    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow)
+    /// allScreens: the sample mess spread over every display, drawn as one picture of the whole floor.
+    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow, bool allScreens = false)
     {
         Directory.CreateDirectory(outDir);
-        var screen = Screen.Primary();
-        var size = screen.SizePts;
+        var screens = allScreens ? Screen.All() : new List<Screen> { Screen.Primary() };
+        Floorplan.Layout(screens);
+        var plan = Floorplan.Of(screens);
+        var size = new V2(plan.Bounds.W, plan.Bounds.H);
         Sprites.TexScale = MathF.Max(2, pixelScale);
         using var host = new Form { ShowInTaskbar = false, FormBorderStyle = FormBorderStyle.None, Size = new System.Drawing.Size(64, 64) };
         host.CreateControl();
         var (dc, ctx) = Gl.CreateContext(host.Handle);
         Console.WriteLine("GL " + Gl.Version);
-        var r = new Renderer(size);
-        using (var wall = plainFloor ? Wallpaper.Fallback(screen.WorkArea.Width, screen.WorkArea.Height) : Wallpaper.Capture(screen)) r.SetWallpaper(wall);
-        var entries = DesktopReader.Sample(size);
+        Console.WriteLine("rooms " + string.Join(" ", plan.Rooms.Select(x => $"[{x.X:0},{x.Y:0} {x.W:0}x{x.H:0}]")));
+        var r = new Renderer(size, new V2(plan.Bounds.X, plan.Bounds.Y));
+        r.LidarRadius = MathF.Max(size.X, size.Y) * 0.85f;
+        using (var wall = plainFloor || allScreens ? Wallpaper.Fallback((int)size.X, (int)size.Y) : Wallpaper.Capture(screens[0])) r.SetWallpaper(wall);
+        var entries = DesktopReader.SampleAcross(screens);
         var sprites = Sprites.BuildNow(entries);
         r.SetSprites(sprites);
-        var s = new Sim(size, V2.Zero, size, entries) { Mode = mode, SkipFinalClick = true };
+        var s = new Sim(plan, entries) { Mode = mode, SkipFinalClick = true };
         for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
 
         int W = (int)(size.X * pixelScale), H = (int)(size.Y * pixelScale);
@@ -78,12 +83,13 @@ public static unsafe class Offline
 
     /// Dev only, read-only: lays the copy of the real desktop over the real one at half strength and
     /// saves a screenshot, to check that every icon and label sits exactly on its original.
-    public static void AlignTest(string outFile)
+    public static void AlignTest(string outFile, int screenIndex = 0)
     {
-        var screen = Screen.Primary();
-        var entries = DesktopReader.Read(screen, out var view);
-        Metrics.IconHalf = view.IconPx / screen.Scale / 2;
-        Metrics.LabelHalf = new V2(MathF.Max(30, view.Spacing.X / screen.Scale / 2 - 1), 19);
+        var screens = Screen.All();
+        var screen = screens[screenIndex];
+        var entries = DesktopReader.Read(screens, out var view)[screenIndex];
+        Metrics.IconHalf = view.IconPt / 2;
+        Metrics.LabelHalf = new V2(MathF.Max(30, view.LabelWidthPts / 2 - 1), 19);
         Sprites.TexScale = MathF.Max(2, screen.Scale);
         var sprites = Sprites.BuildNow(entries);
         using var o = new Overlay(screen) { KeepBelowWindows = false };
@@ -115,7 +121,7 @@ public static unsafe class Offline
         mix.Save(outFile, ImageFormat.Png);
         copy.Save(Path.ChangeExtension(outFile, ".copy.png"), ImageFormat.Png);
         real.Save(Path.ChangeExtension(outFile, ".real.png"), ImageFormat.Png);
-        Console.WriteLine($"items {entries.Count} icon {view.IconPx}px spacing {view.Spacing.X}x{view.Spacing.Y} -> {outFile}");
+        Console.WriteLine($"items {entries.Count} icon {view.IconPt}pt spacing {view.Spacing.X}x{view.Spacing.Y} -> {outFile}");
     }
 
     static void RenderStill(Overlay o)

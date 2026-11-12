@@ -7,7 +7,8 @@ public static class Shaders
 #define saturate(x) clamp((x), 0.0, 1.0)
 const vec2 kQuad[6] = vec2[6](vec2(-1.0,-1.0), vec2(1.0,-1.0), vec2(-1.0,1.0), vec2(-1.0,1.0), vec2(1.0,-1.0), vec2(1.0,1.0));
 uniform vec2 viewport;
-vec4 toClip(vec2 p) { return vec4(p.x / viewport.x * 2.0 - 1.0, 1.0 - p.y / viewport.y * 2.0, 0.0, 1.0); }
+uniform vec2 origin;   // this display's top-left in the shared world
+vec4 toClip(vec2 w) { vec2 p = w - origin; return vec4(p.x / viewport.x * 2.0 - 1.0, 1.0 - p.y / viewport.y * 2.0, 0.0, 1.0); }
 ";
 
     // ---------- wallpaper + freshly vacuumed lanes ----------

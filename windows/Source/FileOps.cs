@@ -35,6 +35,7 @@ public static class FileOps
         public string Folder { get; set; }        // where moved items went
         public List<Record> Items { get; set; } = new();
         public bool Undone { get; set; }
+        public List<string> CreatedFolders { get; set; } = new();   // sort folders RoboDust made, removed again on undo if empty
     }
 
     public sealed class Outcome
@@ -153,6 +154,88 @@ public static class FileOps
         catch { }
     }
 
+    // MARK: - Sort into folders
+
+    static readonly System.Globalization.CultureInfo German = System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+
+    /// The folder an item belongs in. Same answer for the panel's preview and the real move.
+    public static string GroupOf(string name, Kind kind, DateTime? modifiedUtc, SortBy by)
+    {
+        switch (by)
+        {
+            case SortBy.Alphabet:
+            {
+                var first = name.TrimStart('.', '_', '-', ' ', '(', '[').FirstOrDefault();
+                var c = char.ToUpperInvariant(RemoveAccent(first));
+                if (c >= 'A' && c <= 'E') return "A–E";
+                if (c >= 'F' && c <= 'J') return "F–J";
+                if (c >= 'K' && c <= 'O') return "K–O";
+                if (c >= 'P' && c <= 'T') return "P–T";
+                if (c >= 'U' && c <= 'Z') return "U–Z";
+                return "0–9 und Sonstiges";
+            }
+            case SortBy.Date:
+            {
+                var d = (modifiedUtc ?? DateTime.UtcNow).ToLocalTime();
+                // Year and month number first, so the folders line up in order.
+                return d.ToString("yyyy-MM MMMM", German);
+            }
+            default:
+            {
+                var ext = Path.GetExtension(name).ToLowerInvariant();
+                if (kind != Kind.Folder && ext is ".lnk" or ".url") return "Verknüpfungen";
+                return kind switch
+                {
+                    Kind.Folder => "Ordner", Kind.Image => "Bilder", Kind.Video => "Videos", Kind.Document => "Dokumente",
+                    Kind.Archive => "Archive", Kind.Audio => "Musik", _ => "Sonstiges",
+                };
+            }
+        }
+    }
+
+    static char RemoveAccent(char c)
+    {
+        var s = c.ToString().Normalize(System.Text.NormalizationForm.FormD);
+        return s.Length > 0 ? s[0] : c;
+    }
+
+    /// Moves each item into a folder on the desktop named for its group. A folder that already exists
+    /// with that name is used as it is; one that RoboDust makes is noted, so undo can take it away again.
+    public static Outcome Sort(List<Target> targets, string root, Func<Target, string> group)
+    {
+        var o = new Outcome();
+        var run = new Run { Id = Guid.NewGuid().ToString("N")[..12], When = DateTime.Now, Mode = "sort", Folder = root };
+        o.Run = run;
+        var groups = new HashSet<string>(targets.Select(group), StringComparer.OrdinalIgnoreCase);
+        foreach (var t in targets)
+        {
+            var why = Refusal(t, root);
+            if (why != null) { o.Failed.Add((t.Index, why)); continue; }
+            var name = Path.GetFileName(t.Path);
+            // A folder that is itself one of the sort folders stays put and takes the others in.
+            if (groups.Contains(name) && Directory.Exists(t.Path)) { o.Failed.Add((t.Index, "Ist selbst ein Sammelordner")); continue; }
+            try
+            {
+                var folder = Path.Combine(Norm(root), group(t));
+                if (File.Exists(folder)) { o.Failed.Add((t.Index, "Eine Datei heißt schon wie der Ordner")); continue; }
+                if (!Directory.Exists(folder)) { Directory.CreateDirectory(folder); run.CreatedFolders.Add(folder); }
+                var dst = Path.Combine(folder, name);
+                if (File.Exists(dst) || Directory.Exists(dst)) { o.Failed.Add((t.Index, "Im Ordner liegt schon etwas mit dem Namen")); continue; }
+                var info = Info(t.Path);
+                if (info is DirectoryInfo) Directory.Move(t.Path, dst); else File.Move(t.Path, dst, false);
+                o.Done.Add(t.Index);
+                run.Items.Add(new Record { Original = Norm(t.Path), Now = dst, X = t.ViewPos?.X, Y = t.ViewPos?.Y });
+            }
+            catch (Exception e) { o.Failed.Add((t.Index, Short(e))); }
+        }
+        // Only ever an empty folder RoboDust just made.
+        foreach (var d in run.CreatedFolders.ToList())
+            try { if (!Directory.EnumerateFileSystemEntries(d).Any()) { Directory.Delete(d, false); run.CreatedFolders.Remove(d); } } catch { }
+        if (run.Items.Count > 0) SaveRun(run);
+        Log("in ordner", o, targets, null);
+        return o;
+    }
+
     // MARK: - Hide
 
     public static Outcome Hide(List<Target> targets, string root)
@@ -192,7 +275,7 @@ public static class FileOps
         {
             try
             {
-                if (run.Mode == "move")
+                if (run.Mode is "move" or "sort")
                 {
                     var src = Info(r.Now);
                     if (src == null) { left.Add((r, "Nicht mehr in der Ablage")); continue; }
@@ -223,6 +306,12 @@ public static class FileOps
                 }
             }
             catch { }
+        }
+        if (run.Mode == "sort")
+        {
+            // A sort folder RoboDust made goes again, but only once it's completely empty.
+            foreach (var d in run.CreatedFolders)
+                try { if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d, false); } catch { }
         }
         run.Undone = left.Count == 0;
         if (!run.Undone) run.Items = left.Select(l => l.Item1).ToList();
@@ -350,6 +439,25 @@ public static class FileOps
         Undo(hidden.Run);
         Check("undo shows the hidden file again", (File.GetAttributes(h1) & FileAttributes.Hidden) == 0);
         Check("undo leaves a file hidden that was hidden before", (File.GetAttributes(h2) & FileAttributes.Hidden) != 0);
+
+        // Sorting into folders on the desktop, by type.
+        var s1 = Make(root, "photo.jpg"); var s2 = Make(root, "notes2.txt"); var s3 = Make(root, "clip.mp4");
+        var mine = Path.Combine(root, "Bilder"); Directory.CreateDirectory(mine); Make(mine, "old.png");   // the user's own folder of that name
+        var sub = Path.Combine(root, "stuff"); Directory.CreateDirectory(sub);
+        var sortTargets = new List<Target> { T(40, s1, Mod(s1)), T(41, s2, Mod(s2)), T(42, s3, Mod(s3)), T(43, mine, Info(mine).LastWriteTimeUtc), T(44, sub, Info(sub).LastWriteTimeUtc), T(45, keepOutside) };
+        Kind KindOf(Target t) => KindInfo.Of(t.Path, Directory.Exists(t.Path));
+        var so = Sort(sortTargets, root, t => GroupOf(Path.GetFileName(t.Path), KindOf(t), null, SortBy.Type));
+        Check("sorts an image into the existing Bilder folder", File.Exists(Path.Combine(mine, "photo.jpg")) && File.Exists(Path.Combine(mine, "old.png")));
+        Check("makes Dokumente and Videos folders for the rest", File.Exists(Path.Combine(root, "Dokumente", "notes2.txt")) && File.Exists(Path.Combine(root, "Videos", "clip.mp4")));
+        Check("moves a folder into Ordner", Directory.Exists(Path.Combine(root, "Ordner", "stuff")));
+        Check("leaves a folder alone that is itself a sort folder", Directory.Exists(mine) && so.Failed.Any(f => f.index == 43));
+        Check("sort refuses a file outside the desktop", File.Exists(keepOutside) && so.Failed.Any(f => f.index == 45));
+        Check("notes only the folders it made", so.Run.CreatedFolders.Count == 3 && !so.Run.CreatedFolders.Any(d => d.EndsWith("Bilder")));
+        Undo(so.Run);
+        Check("undo puts every sorted item back", File.Exists(s1) && File.Exists(s2) && File.Exists(s3) && Directory.Exists(sub));
+        Check("undo removes the folders it made, and keeps the user's", !Directory.Exists(Path.Combine(root, "Dokumente")) && !Directory.Exists(Path.Combine(root, "Ordner")) && File.Exists(Path.Combine(mine, "old.png")));
+        Check("groups by alphabet", GroupOf("Äpfel.txt", Kind.Document, null, SortBy.Alphabet) == "A–E" && GroupOf("zebra", Kind.Folder, null, SortBy.Alphabet) == "U–Z" && GroupOf("2024.pdf", Kind.Document, null, SortBy.Alphabet) == "0–9 und Sonstiges");
+        Check("groups by month", GroupOf("x", Kind.Other, new DateTime(2026, 10, 15, 12, 0, 0, DateTimeKind.Utc), SortBy.Date) == "2026-10 Oktober");
 
         // Links are moved as links: what they point to stays where it is.
         var linkTarget = Make(outside, "link-target.txt");

@@ -1,12 +1,13 @@
 # RoboDust für Windows
 
-Die Windows-Version von [RoboDust](../README.md), dem Saugroboter für deinen Desktop. RoboDust stammt von [Raufan](https://muhraufan.com) (MIT-Lizenz), und diese Version ist ein Port seiner Mac-App: dieselbe Simulation, dieselben Shader, derselbe Roboter.
+Die Windows-Version von [RoboDust](../README.md), dem Saugroboter für deinen Desktop. RoboDust stammt von [Raufan](https://muhraufan.com) (MIT-Lizenz). Die Windows-Version wurde von Alessio Brendt entwickelt und ist ein Port seiner Mac-App: dieselbe Simulation, dieselben Shader, derselbe Roboter.
 
 ## Der wichtigste Unterschied: Sie löscht nie etwas
 
 Die Mac-Version legt am Ende alles in den Papierkorb oder löscht es endgültig. Die Windows-Version macht keins von beidem. Du hast drei Möglichkeiten:
 
 - **Ordnen**: sortiert die Symbole nach Art in Spalten. Nur die Symbole bewegen sich, die Dateien bleiben, wo sie sind.
+- **In Ordner**: sortiert alles in Ordner auf dem Desktop, wahlweise nach Art („Bilder“, „Dokumente“, „Videos“ …), nach Alphabet („A–E“, „F–J“ …) oder nach Monat der letzten Änderung („2026-10 Oktober“). Gibt es so einen Ordner schon, kommt alles dazu. Beim Rückgängigmachen verschwinden nur die Ordner wieder, die RoboDust selbst angelegt hat, und auch die nur, wenn sie leer sind.
 - **Wegräumen**: verschiebt alles in einen eigenen Ordner unter `C:\Users\<du>\RoboDust Ablage\<Datum Uhrzeit>`. Dort liegt auch eine kleine `_RoboDust-Info.txt`, die festhält, was woher kam.
 - **Ausblenden**: setzt bei den Dateien das Attribut „Versteckt“. Sie bleiben genau, wo sie sind.
 
@@ -51,17 +52,22 @@ Fang mit dem Beispiel-Chaos an. Das ist erfunden und hat keine Dateien dahinter.
 # Prüft Wegräumen, Ausblenden und Rückgängig an Wegwerf-Dateien im angegebenen Ordner.
 RoboDust.exe --fileops-test C:\Temp\robodust-test
 
-# Ein echter Durchgang mit einem Wegwerf-Ordner als Desktop. 1 ist Wegräumen, 2 Ausblenden.
+# Ein echter Durchgang mit einem Wegwerf-Ordner als Desktop. 1 ist Wegräumen, 2 Ausblenden, 3 In Ordner.
 # Die Ablage landet daneben in C:\Temp\shelf, nicht in deiner echten.
 RoboDust.exe --auto --no-hide --test-root C:\Temp\robodust-test\desk --test-mode 1
 
 # Rendert einen Durchgang mit dem Beispiel-Chaos unsichtbar und speichert Einzelbilder als PNG.
+# Mit --all-screens über alle Bildschirme, als ein Bild der ganzen Wohnung.
 RoboDust.exe --dump 4,8,12 --out C:\Temp\frames --plain-floor
 
 # Liest deinen echten Desktop nur aus und gibt Anzahlen und Geometrie aus, keine Namen.
 RoboDust.exe --read-test
 ```
 
+## Mehrere Bildschirme
+
+Ein Roboter fährt über alle Bildschirme. RoboDust legt die Monitore so nebeneinander, wie sie bei dir stehen, und behandelt jeden als Raum einer Wohnung. Wo sich zwei Bildschirme berühren, ist eine Tür, durch die der Roboter hinüberfährt. Die Station steht auf dem Hauptbildschirm. Monitore mit unterschiedlicher Skalierung sind kein Problem, und Win+D bringt RoboDust nicht aus dem Tritt.
+
 ## Was (noch) fehlt
 
-Die Katze aus der Mac-Version und die automatischen Updates gibt es auf Windows noch nicht. RoboDust nutzt den Hauptbildschirm. Symbole auf weiteren Bildschirmen bleiben, wo sie sind.
+Die Katze aus der Mac-Version und die automatischen Updates gibt es auf Windows noch nicht.

@@ -16,7 +16,8 @@
     <Version>0.8.0</Version>
     <Product>RoboDust</Product>
     <Company>Muhammad Raufan Yusup</Company>
-    <Copyright>© 2026 Muhammad Raufan Yusup</Copyright>
+    <Authors>Muhammad Raufan Yusup; Windows-Version: Alessio Brendt</Authors>
+    <Copyright>© 2026 Muhammad Raufan Yusup. Windows-Version entwickelt von Alessio Brendt</Copyright>
     <Description>A robot vacuum for your Windows desktop</Description>
     <InvariantGlobalization>false</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

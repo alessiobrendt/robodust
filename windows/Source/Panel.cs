@@ -46,6 +46,8 @@ public sealed class Panel : Window
         Content = root;
         MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) try { DragMove(); } catch { } };
         KeyDown += OnKey;
+        // Win+D minimizes everything; the panel comes straight back, since it has no minimize button anyway.
+        StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; };
         SourceInitialized += (_, _) =>
         {
             var h = new WindowInteropHelper(this).Handle;
@@ -243,7 +245,7 @@ public sealed class Panel : Window
             var on = EqualityComparer<T>.Default.Equals(value, selected);
             var b = new Button
             {
-                Content = new TextBlock { Text = title, FontSize = 13, FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal, Foreground = on ? Brushes.White : Secondary },
+                Content = new TextBlock { Text = title, FontSize = options.Count > 3 ? 12 : 13, FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal, Foreground = on ? Brushes.White : Secondary },
                 Height = 28, Cursor = Cursors.Hand,
             };
             b.Template = Template(new CornerRadius(6), on ? new SolidColorBrush(Color.FromArgb(56, 255, 255, 255)) : Brushes.Transparent, null,
@@ -332,7 +334,7 @@ public sealed class Panel : Window
         // After a clean, the result is all there is to look at. Done brings the settings back.
         if (m.LastRun is { } last)
         {
-            var what = last.Mode == "move" ? "weggeräumt" : "ausgeblendet";
+            var what = last.Mode switch { "move" => "weggeräumt", "sort" => "in Ordner sortiert", _ => "ausgeblendet" };
             var n = last.Items.Count;
             var items = new List<UIElement>
             {
@@ -347,8 +349,14 @@ public sealed class Panel : Window
         body.Children.Add(Field("Aufräumen", Segmented(new List<(Source, string)> { (Source.Sample, "Beispiel-Chaos"), (Source.Real, "Mein Desktop") }, m.Source, v => { m.Source = v; m.Changed(); })));
         var after = new List<UIElement>
         {
-            Segmented(new List<(CleanMode, string)> { (CleanMode.Tidy, "Ordnen"), (CleanMode.Move, "Wegräumen"), (CleanMode.Hide, "Ausblenden") }, m.Mode, v => { m.Mode = v; m.Changed(); }),
+            Segmented(new List<(CleanMode, string)> { (CleanMode.Tidy, "Ordnen"), (CleanMode.Sort, "In Ordner"), (CleanMode.Move, "Wegräumen"), (CleanMode.Hide, "Ausblenden") }, m.Mode, v => { m.Mode = v; m.Changed(); }),
         };
+        if (m.Mode == CleanMode.Sort)
+        {
+            var by = Segmented(new List<(SortBy, string)> { (SortBy.Type, "nach Art"), (SortBy.Alphabet, "nach Alphabet"), (SortBy.Date, "nach Datum") }, m.SortBy, v => { m.SortBy = v; m.Changed(); });
+            ((FrameworkElement)by).Margin = new Thickness(0, 6, 0, 0);
+            after.Add(by);
+        }
         var blurb = Text(ModeBlurb); blurb.Margin = new Thickness(0, 7, 0, 0); after.Add(blurb);
         if (m.Mode != CleanMode.Tidy)
         {
@@ -384,6 +392,12 @@ public sealed class Panel : Window
             {
                 CleanMode.Tidy => "Sortiert alles nach Art in ordentliche Spalten. Nur die Symbole bewegen sich.",
                 CleanMode.Move => "Räumt alles in einen Ordner unter „RoboDust Ablage“. Nichts wird gelöscht." + ask,
+                CleanMode.Sort => model.SortBy switch
+                {
+                    SortBy.Alphabet => "Sortiert alles in Ordner wie „A–E“ und „F–J“ auf deinem Desktop.",
+                    SortBy.Date => "Sortiert alles nach dem Monat der letzten Änderung in Ordner wie „2026-10 Oktober“.",
+                    _ => "Sortiert alles in Ordner wie „Bilder“, „Dokumente“ und „Videos“ auf deinem Desktop.",
+                } + " Gibt es so einen Ordner schon, kommt alles dazu. Nichts wird gelöscht." + ask,
                 _ => "Blendet alles aus. Die Dateien bleiben genau, wo sie sind." + ask,
             };
         }
@@ -398,6 +412,7 @@ public sealed class Panel : Window
             {
                 CleanMode.Tidy => "RoboDust ordnet die Symbole auf deinem echten Desktop neu. Deine Dateien bleiben, wo sie sind.",
                 CleanMode.Move => "RoboDust verschiebt deine echten Dateien in die Ablage und löscht nie etwas. Gesperrtes, gerade Geändertes und Code-Projekte bleiben liegen.",
+                CleanMode.Sort => "RoboDust sortiert deine echten Dateien in Ordner auf dem Desktop und löscht nie etwas. Gesperrtes, gerade Geändertes und Code-Projekte bleiben liegen.",
                 _ => "RoboDust blendet deine echten Dateien aus und löscht nie etwas. Gesperrtes, gerade Geändertes und Code-Projekte bleiben liegen.",
             };
         }
@@ -487,7 +502,7 @@ public sealed class Panel : Window
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal };
             row.Children.Add(new ProgressBar { IsIndeterminate = true, Width = 60, Height = 4, Margin = new Thickness(0, 0, 10, 0), Foreground = new SolidColorBrush(Accent), Background = new SolidColorBrush(Color.FromArgb(26, 255, 255, 255)), BorderThickness = new Thickness(0) });
-            row.Children.Add(Text(m.Outcome == CleanMode.Move ? "Räumt weg…" : m.Outcome == CleanMode.Hide ? "Blendet aus…" : "Ordnet deine Symbole…", 13, Primary));
+            row.Children.Add(Text(m.Outcome switch { CleanMode.Move => "Räumt weg…", CleanMode.Hide => "Blendet aus…", CleanMode.Sort => "Sortiert in Ordner…", _ => "Ordnet deine Symbole…" }, 13, Primary));
             body.Children.Add(row);
         }
         else if (AwaitingChoice) Decision(body);
@@ -497,7 +512,7 @@ public sealed class Panel : Window
         }
         else if (m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied)
         {
-            var title = m.Outcome switch { CleanMode.Move => $"{m.Total} Elemente weggeräumt", CleanMode.Hide => $"{m.Total} Elemente ausgeblendet", _ => "In Spalten sortiert" };
+            var title = m.Outcome switch { CleanMode.Move => $"{m.Total} Elemente weggeräumt", CleanMode.Hide => $"{m.Total} Elemente ausgeblendet", CleanMode.Sort => $"{m.Total} Elemente in Ordner sortiert", _ => "In Spalten sortiert" };
             body.Children.Add(Text(title, 13, Primary, true));
             var d = Text("Das war das Beispiel-Chaos, also hat sich nichts Echtes geändert. Leg alles zurück, um fertig zu werden.");
             d.Margin = new Thickness(0, 4, 0, 12);
@@ -522,7 +537,7 @@ public sealed class Panel : Window
         {
             var n = SelectedCount;
             var noun = n == 1 ? "Element" : "Elemente";
-            return model.Mode == CleanMode.Move ? $"{n} {noun} in die Ablage räumen?" : $"{n} {noun} ausblenden?";
+            return model.Mode switch { CleanMode.Move => $"{n} {noun} in die Ablage räumen?", CleanMode.Sort => $"{n} {noun} in Ordner sortieren?", _ => $"{n} {noun} ausblenden?" };
         }
     }
 
@@ -568,7 +583,7 @@ public sealed class Panel : Window
                 body.Children.Add(new ScrollViewer { Content = list, Height = 170, Margin = new Thickness(0, 6, 0, 0), VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
             }
         }
-        var go = m.Mode == CleanMode.Move ? Btn("Wegräumen", Kind.Primary, () => m.Choose(CleanMode.Move)) : Btn("Ausblenden", Kind.Primary, () => m.Choose(CleanMode.Hide));
+        var go = Btn(m.Mode switch { CleanMode.Move => "Wegräumen", CleanMode.Sort => "In Ordner sortieren", _ => "Ausblenden" }, Kind.Primary, () => m.Choose(m.Mode));
         go.IsEnabled = n > 0;
         goButton = go;
         go.Margin = new Thickness(0, 12, 0, 8);
@@ -581,11 +596,20 @@ public sealed class Panel : Window
         get
         {
             var m = model;
-            if (!m.RealRun) return "Das ist das Beispiel-Chaos, es ändert sich nichts Echtes.";
+            var preview = "";
+            if (m.Mode == CleanMode.Sort)
+            {
+                // Which folders it will make, and how full each gets.
+                var groups = (m.Sim?.Items ?? new List<Item>()).Where(i => !i.Protected && !m.Excluded.Contains(i.Index))
+                    .GroupBy(i => FileOps.GroupOf(i.Entry.Name, i.Entry.Kind, i.Entry.Modified, m.SortBy))
+                    .OrderBy(g => g.Key).Select(g => $"{g.Key} ({g.Count()})").ToList();
+                if (groups.Count > 0) preview = "Ordner: " + string.Join(", ", groups.Take(10)) + (groups.Count > 10 ? " …" : "") + ". ";
+            }
+            if (!m.RealRun) return preview + "Das ist das Beispiel-Chaos, es ändert sich nichts Echtes.";
             var parts = new List<string>();
             if (m.FileBytes > 0) parts.Add($"{Fmt.Bytes(m.FileBytes)} in Dateien");
             if (m.FolderCount > 0) parts.Add($"{m.FolderCount} {(m.FolderCount == 1 ? "Ordner" : "Ordner")}");
-            var text = parts.Count > 0 ? string.Join(", dazu ", parts) + ". " : "";
+            var text = preview + (parts.Count > 0 ? string.Join(", dazu ", parts) + ". " : "");
             text += "Nichts wird gelöscht, und du kannst alles mit einem Klick zurückholen.";
             if (m.LeftAlone > 0) text += $" {m.LeftAlone} zur Sicherheit liegen gelassen.";
             return text;
@@ -622,15 +646,16 @@ public static class PanelShot
         Settings.Persists = false;
         System.IO.Directory.CreateDirectory(dir);
         Model M() { var m = new Model(); m.Settings.SkipFinalClick = false; m.Settings.SupportCardShown = true; return m; }
-        var a = M(); a.Mode = CleanMode.Move; One(a, System.IO.Path.Combine(dir, "panel_ready.png"));
+        var a = M(); a.Mode = CleanMode.Sort; One(a, System.IO.Path.Combine(dir, "panel_ready.png"));
         var a2 = M(); a2.Source = Source.Real; a2.Mode = CleanMode.Hide; a2.LastRun = new FileOps.Run { Mode = "move", When = DateTime.Now, Items = new() { new(), new(), new() } };
         One(a2, System.IO.Path.Combine(dir, "panel_ready_real.png"));
         var e = DesktopReader.Sample(new V2(1536, 912));
         var s = new Sim(new V2(1536, 912), V2.Zero, new V2(1536, 912), e);
         foreach (var it in s.Items.Take(30)) it.Seen = true;
+
         var b = M(); b.Stage = Stage.Running; b.Sim = s; b.Status = "Saugt"; b.Phase = Phase.Cleaning; b.Total = 42; b.Collected = 17; b.CollectedBytes = 4_300_000_000; b.Bin = 0.7f; b.Battery = 0.92f; b.RunTime = 74;
         One(b, System.IO.Path.Combine(dir, "panel_running.png"));
-        var d = M(); d.Stage = Stage.Running; d.Sim = s; d.Status = "Alles sauber"; d.Phase = Phase.Done; d.Total = 105; d.Collected = 105; d.FileBytes = 2_600_000_000; d.FolderCount = 3; d.LeftAlone = 9; d.RealRun = true; d.UsesCloud = true; d.Mode = CleanMode.Move; d.Battery = 0.9f; d.RunTime = 196; d.ReviewOpen = true;
+        var d = M(); d.Stage = Stage.Running; d.Sim = s; d.Status = "Alles sauber"; d.Phase = Phase.Done; d.Total = 105; d.Collected = 105; d.FileBytes = 2_600_000_000; d.FolderCount = 3; d.LeftAlone = 9; d.RealRun = true; d.UsesCloud = true; d.Mode = CleanMode.Sort; d.Battery = 0.9f; d.RunTime = 196; d.ReviewOpen = true;
         d.ReviewRows = Enumerable.Range(0, 12).Select(i => (i, $"Screenshot 2026-10-{10 + i} 091422.png")).ToList();
         One(d, System.IO.Path.Combine(dir, "panel_decision.png"));
         var f = M(); f.Source = Source.Real; f.Result = new RunResult { Title = "105 Elemente in die Ablage geräumt", Detail = "Sie liegen in „~\\RoboDust Ablage\\2026-11-12 14.30.05“. 9 zur Sicherheit liegen gelassen.", CanUndo = true };
@@ -661,13 +686,21 @@ public sealed class MapView : FrameworkElement
     {
         var s = model.Sim;
         if (s == null) return;
+        // Every display in its real place: one floor plan with a room per display.
+        var b = s.Plan.Bounds;
         double W = ActualWidth, H = ActualHeight;
-        var k = Math.Min(W / s.Size.X, H / s.Size.Y);
-        double w = s.Size.X * k, h = s.Size.Y * k, ox = (W - w) / 2, oy = (H - h) / 2;
-        Point P(V2 v) => new(ox + v.X * k, oy + v.Y * k);
-        var frame = new Rect(ox, oy, w, h);
-        c.PushClip(new RectangleGeometry(frame, 8, 8));
-        c.DrawRectangle(new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)), null, frame);
+        var k = Math.Min(W / b.W, H / b.H);
+        double ox = (W - b.W * k) / 2, oy = (H - b.H * k) / 2;
+        Point P(V2 v) => new(ox + (v.X - b.X) * k, oy + (v.Y - b.Y) * k);
+        var rooms = new GeometryGroup();
+        var gap = s.Plan.Rooms.Count > 1 ? 1.5 : 0;
+        foreach (var r in s.Plan.Rooms)
+        {
+            var tl = P(new V2(r.X, r.Y));
+            rooms.Children.Add(new RectangleGeometry(new Rect(tl.X + gap, tl.Y, Math.Max(0, r.W * k - 2 * gap), r.H * k), 6, 6));
+        }
+        c.PushClip(rooms);
+        c.DrawGeometry(new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)), null, rooms);
         if (s.Trail.Count > 1)
         {
             var g = new StreamGeometry();

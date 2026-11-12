@@ -17,16 +17,20 @@ public sealed class AppController
 {
     public readonly Model Model = new();
     public Panel Panel;
-    Overlay overlay;
     Sim sim;
+    readonly List<Overlay> overlays = new();
+    List<Screen> screens = new();
+    readonly Stopwatch clock = Stopwatch.StartNew();
+    double lastFrame; float frameAcc;
+    bool doneHandled, fading;
     DesktopView view;
-    Screen screen;
     readonly Synth synth = new();
     readonly List<IntPtr> minimized = new();
     DispatcherTimer uiTimer;
     Forms.NotifyIcon tray;
     readonly Dispatcher ui = Dispatcher.CurrentDispatcher;
     public bool AutoDemo, AutoPutBack, AutoUndo, AutoQuit;
+    public double AutoStop;   // dev only: stop after this many seconds, which changes nothing
     bool quitting;
     public string TestRoot;
     bool actionStarted;
@@ -59,6 +63,7 @@ public sealed class AppController
         Panel.Show();
         BuildTray();
         if (AutoDemo) ui.BeginInvoke(Begin, DispatcherPriority.ApplicationIdle);
+        if (AutoStop > 0) Delay(AutoStop, () => { FileOps.Trace($"auto stop: {overlays.Count} window(s), {sim?.Items.Count} items, {sim?.Phase}, robot at {sim?.Pos}, room {(sim != null ? sim.Plan.RoomOf(sim.Pos) : -1)}"); StopAndRestore(); Quit(); });
     }
 
     void BuildTray()
@@ -77,9 +82,9 @@ public sealed class AppController
     void ShowAbout()
     {
         MessageBox.Show(Panel,
-            "RoboDust\n\nEin Saugroboter für deinen Desktop.\nEntwickelt von Muhammad Raufan Yusup, muhraufan.com\n\n" +
-            "Windows-Version. Sie löscht nie etwas: Sie räumt in einen Ordner weg oder blendet aus, und alles lässt sich zurückholen.\n\n" +
-            "© 2026 Muhammad Raufan Yusup. MIT-Lizenz.\nhttps://github.com/muhraufan/robodust",
+            "RoboDust\n\nEin Saugroboter für deinen Desktop.\nEntwickelt von Muhammad Raufan Yusup, muhraufan.com\nWindows-Version entwickelt von Alessio Brendt\n\n" +
+            "Die Windows-Version löscht nie etwas: Sie sortiert, räumt weg oder blendet aus, und alles lässt sich zurückholen.\n\n" +
+            "© 2026 Muhammad Raufan Yusup. Windows-Version: Alessio Brendt. MIT-Lizenz.\nhttps://github.com/muhraufan/robodust",
             "Über RoboDust", MessageBoxButton.OK, MessageBoxImage.None);
     }
 
@@ -92,42 +97,46 @@ public sealed class AppController
         Application.Current.Shutdown();
     }
 
+
+
     // MARK: - Run
 
     void Begin()
     {
         var m = Model;
         if (m.Stage != Stage.Ready) return;
-        screen = Screen.Primary();
-        var size = screen.SizePts;
+        var all = Screen.All();
+        Floorplan.Layout(all);
+        var primary = all[0];
         m.Note = null; m.Result = null; m.Support = SupportCard.Hidden; undoAction = null;
         view = null;
-        List<DesktopEntry> entries;
         // Explorer's medium icons, unless the real desktop says otherwise.
         Metrics.IconHalf = 24; Metrics.LabelHalf = new V2(38, 19);
-        if (TestRoot != null) entries = DesktopReader.Sandbox(TestRoot, size);
+        List<DesktopEntry> entries;
+        screens = all;
+        if (TestRoot != null) { screens = new() { primary }; entries = DesktopReader.Sandbox(TestRoot, primary.SizePts); }
         else if (m.Source == Source.Real)
         {
             try
             {
-                entries = DesktopReader.Read(screen, out view);
-                Metrics.IconHalf = view.IconPx / screen.Scale / 2;
-                Metrics.LabelHalf = new V2(MathF.Max(30, view.Spacing.X / screen.Scale / 2 - 1), 19);
+                entries = DesktopReader.Read(all, out view).SelectMany(l => l).ToList();
+                Metrics.IconHalf = view.IconPt / 2;
+                Metrics.LabelHalf = new V2(MathF.Max(30, view.LabelWidthPts / 2 - 1), 19);
             }
             catch (DesktopException e) when (e.NoItems)
             {
                 m.Note = "Dein Desktop ist schon leer, deshalb gibt es stattdessen das Beispiel-Chaos.";
-                entries = DesktopReader.Sample(size);
+                entries = DesktopReader.SampleAcross(all);
             }
             catch (Exception e)
             {
                 m.Note = "RoboDust kann deinen Desktop gerade nicht lesen, deshalb gibt es das Beispiel-Chaos. (" + e.Message + ")";
                 m.Source = Source.Sample;
-                entries = DesktopReader.Sample(size);
+                entries = DesktopReader.SampleAcross(all);
             }
         }
-        else entries = DesktopReader.Sample(size);
-        Sprites.TexScale = MathF.Max(2, screen.Scale);
+        else entries = DesktopReader.SampleAcross(all);
+        Sprites.TexScale = MathF.Max(2, screens.Max(s => s.Scale));
         m.Stage = Stage.Preparing; m.Prepared = 0; m.PrepareTotal = entries.Count;
         m.Changed();
         Sprites.Build(entries, n => { m.Prepared = Math.Max(m.Prepared, n); m.Changed(); }, sprites => Launch(entries, sprites), ui);
@@ -138,20 +147,18 @@ public sealed class AppController
         var m = Model;
         try
         {
-            var size = screen.SizePts;
-            overlay = new Overlay(screen);
-            overlay.Prepare();
-            using (var wall = SafeWallpaper()) overlay.Renderer.SetWallpaper(wall);
-            overlay.Renderer.SetSprites(sprites);
-            var s = new Sim(size, V2.Zero, size, entries);
-            for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
-            s.Mode = m.Mode;
             m.Outcome = null;
-            s.SkipFinalClick = false;   // handled here, so that it goes through the real file action
             actionStarted = false;
+            doneHandled = false;
             // Entries with no file behind them (the sample mess) can never reach FileOps.
             var real = entries.Any(e => e.Path != null);
-            s.RealRun = real; m.RealRun = real;
+            m.RealRun = real;
+            var plan = Floorplan.Of(screens);
+            var s = new Sim(plan, entries);
+            for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
+            s.Mode = m.Mode;
+            s.SkipFinalClick = false;   // handled here, so that it goes through the real file action
+            s.RealRun = real;
             foreach (var it in s.Items)
             {
                 var e = it.Entry;
@@ -160,6 +167,21 @@ public sealed class AppController
                     || (s.Mode == CleanMode.Move && e.CloudOnly)
                     || (s.Mode == CleanMode.Hide && e.Hidden);
                 if (s.Mode == CleanMode.Tidy && view == null && real) it.Protected = true;   // a test folder has no icons to arrange
+            }
+            // One window per display, each showing its own slice of the same floor.
+            overlays.Clear();
+            foreach (var screen in screens)
+            {
+                var o = new Overlay(screen) { Screens = screens };
+                o.Prepare();
+                o.MakeCurrent();
+                using (var wall = SafeWallpaper(screen)) o.Renderer.SetWallpaper(wall);
+                o.Renderer.SetSprites(sprites);
+                o.Renderer.LidarRadius = MathF.Max(plan.Bounds.W, plan.Bounds.H) * 0.85f;
+                o.Sim = s;
+                o.OnEscape = () => { if (!m.Applying) StopAndRestore(); };
+                o.OnSpace = () => m.TogglePause();
+                overlays.Add(o);
             }
             var collectable = s.Items.Where(i => !i.Protected).ToList();
             m.Excluded = new HashSet<int>();
@@ -174,20 +196,17 @@ public sealed class AppController
             synth.Muted = m.Muted;
             synth.StartLive();
             sim = s;
-            overlay.Sim = s;
-            overlay.OnFinished = FinishRun;
-            overlay.OnEscape = () => { if (!m.Applying) StopAndRestore(); };
-            overlay.OnSpace = () => m.TogglePause();
             if (m.ClearWindows) MinimizeWindows();
-            overlay.ShowAboveDesktop();
+            foreach (var o in overlays) o.ShowAboveDesktop();
             m.Total = collectable.Count;
             m.TotalBytes = collectable.Sum(i => i.Entry.Bytes);
             m.Sim = s;
+            m.Screens = screens;
             m.Stage = Stage.Running;
             m.Phase = s.Phase;
+            lastFrame = clock.Elapsed.TotalSeconds; frameAcc = 0;
             CompositionTarget.Rendering += OnFrame;
             uiTimer = new DispatcherTimer(TimeSpan.FromSeconds(1.0 / 15), DispatcherPriority.Normal, (_, _) => Sync(), ui);
-            s.OnDoneOnce = () => { if (AutoPutBack) Delay(2, () => sim?.PutBack()); };
             m.Changed();
             Panel.Activate();
         }
@@ -200,20 +219,29 @@ public sealed class AppController
         }
     }
 
-    System.Drawing.Bitmap SafeWallpaper()
+    static System.Drawing.Bitmap SafeWallpaper(Screen screen)
     {
         try { return Wallpaper.Capture(screen); }
         catch { return Wallpaper.Fallback(screen.WorkArea.Width, screen.WorkArea.Height); }
     }
 
-    void OnFrame(object sender, EventArgs e) => overlay?.Frame();
+    /// One step of the one robot, then every display draws its slice.
+    void OnFrame(object sender, EventArgs e)
+    {
+        var s = sim;
+        if (s == null || fading && s.Phase == Phase.Finished) return;
+        var dt = Overlay.Step(s, overlays, clock, ref lastFrame, ref frameAcc);
+        foreach (var o in overlays.ToList()) o.Render(dt);
+        if (s.Phase == Phase.Finished) FinishRun();
+    }
 
     void Sync()
     {
         var s = sim; var m = Model;
         if (s == null) return;
         m.Status = s.Status;
-        if (m.Phase != s.Phase) FileOps.Trace($"phase {s.Phase} t={s.T:0.0} collected={s.Collected}/{s.Items.Count}");
+        foreach (var o in overlays) o.KeepAboveDesktop();   // after Win+D
+        if (m.Phase != s.Phase) FileOps.Trace($"phase {s.Phase} t={s.T:0.0} collected={s.Collected}/{s.Items.Count} room={s.Plan.RoomOf(s.Pos)}");
         m.Phase = s.Phase;
         if (s.Discarded is { } d) m.Outcome = d;
         m.Paused = s.Paused;
@@ -223,6 +251,11 @@ public sealed class AppController
         m.CollectedBytes = s.CollectedBytes;
         m.RunTime = s.RunTime;
         synth.Muted = m.Muted;
+        if (s.Phase == Phase.Done && !doneHandled)
+        {
+            doneHandled = true;
+            if (AutoPutBack) Delay(2, () => sim?.PutBack());
+        }
         // Skip-the-question path. Nothing is ever deleted, so there's no countdown to wait out.
         if (s.Phase == Phase.Done && !actionStarted && m.SkipFinalClick && s.Mode != CleanMode.Tidy) Perform(s.Mode);
         if (s.Phase == Phase.Tidied && s.RealRun && !actionStarted) { actionStarted = true; ApplyTidy(s); }
@@ -254,7 +287,14 @@ public sealed class AppController
         m.Applying = true;
         m.Changed();
         var started = Stopwatch.StartNew();
-        Task.Run(() => choice == CleanMode.Move ? FileOps.Move(targets, root) : FileOps.Hide(targets, root)).ContinueWith(t =>
+        var sortBy = m.SortBy;
+        string Group(FileOps.Target t) { var e = s.Items[t.Index].Entry; return FileOps.GroupOf(Path.GetFileName(e.Path), e.Kind, e.Modified, sortBy); }
+        Task.Run(() => choice switch
+        {
+            CleanMode.Move => FileOps.Move(targets, root),
+            CleanMode.Sort => FileOps.Sort(targets, root, Group),
+            _ => FileOps.Hide(targets, root),
+        }).ContinueWith(t =>
         {
             var o = t.IsFaulted ? new FileOps.Outcome { Failed = targets.Select(x => (x.Index, t.Exception?.InnerException?.Message ?? "Fehler")).ToList() } : t.Result;
             Native.SHChangeNotify(Native.SHCNE_UPDATEDIR, Native.SHCNF_PATHW | Native.SHCNF_FLUSH, root, IntPtr.Zero);
@@ -266,16 +306,23 @@ public sealed class AppController
             Delay(wait, () => { m.Applying = false; s.FinishAfterAction(back); m.Changed(); });
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }
-
     void Report(CleanMode choice, FileOps.Outcome o, int excludedCount)
     {
         var m = Model;
         var n = o.Done.Count;
         var noun = n == 1 ? "Element" : "Elemente";
-        var title = choice == CleanMode.Move ? $"{n} {noun} in die Ablage geräumt" : $"{n} {noun} ausgeblendet";
+        var folders = o.Run?.Items.Select(i => Path.GetFileName(Path.GetDirectoryName(i.Now))).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList() ?? new();
+        var title = choice switch
+        {
+            CleanMode.Move => $"{n} {noun} in die Ablage geräumt",
+            CleanMode.Sort => $"{n} {noun} in {folders.Count} {(folders.Count == 1 ? "Ordner" : "Ordner")} sortiert",
+            _ => $"{n} {noun} ausgeblendet",
+        };
+        var verb = choice switch { CleanMode.Move => "weggeräumt", CleanMode.Sort => "einsortiert", _ => "ausgeblendet" };
         var notes = new List<string>();
         if (choice == CleanMode.Move && n > 0 && o.Run?.Folder != null) notes.Add($"Sie liegen in „{ShortPath(o.Run.Folder)}“.");
-        if (o.Failed.Count > 0) notes.Add($"{o.Failed.Count} {(o.Failed.Count == 1 ? "konnte" : "konnten")} nicht {(choice == CleanMode.Move ? "weggeräumt" : "ausgeblendet")} werden und {(o.Failed.Count == 1 ? "bleibt" : "bleiben")} auf deinem Desktop.");
+        if (choice == CleanMode.Sort && n > 0) notes.Add($"Auf deinem Desktop: {string.Join(", ", folders.Take(8))}{(folders.Count > 8 ? " …" : "")}.");
+        if (o.Failed.Count > 0) notes.Add($"{o.Failed.Count} {(o.Failed.Count == 1 ? "konnte" : "konnten")} nicht {verb} werden und {(o.Failed.Count == 1 ? "bleibt" : "bleiben")} auf deinem Desktop.");
         if (excludedCount > 0) notes.Add($"{excludedCount} behalten, wie gewünscht.");
         if (m.LeftAlone > 0) notes.Add($"{m.LeftAlone} zur Sicherheit liegen gelassen.");
         if (n == 0) title = "Nichts wurde verändert";
@@ -343,21 +390,22 @@ public sealed class AppController
         catch { }
     }
 
+    /// Each display's icons go into columns on that same display.
     void ApplyTidy(Sim s)
     {
         var m = Model;
         m.Applying = true; m.Changed();
         var v = view;
         string error = null;
-        var placed = s.Items.Where(i => !i.Protected && i.Entry.Path != null).ToList();
-        var old = placed.Where(i => i.Entry.ViewPos != null).Select(i => (i.Entry.Path, i.Entry.ViewPos.Value)).ToList();
+        var placed = s.Items.Where(i => !i.Protected && i.Entry.Path != null).Select(i => (f: 0, i)).ToList();
+        var old = placed.Where(p => p.i.Entry.ViewPos != null).Select(p => (p.i.Entry.Path, p.i.Entry.ViewPos.Value)).ToList();
         if (v == null) error = "none";
         else if (v.AutoArrange) error = "auto";
         else
         {
             try
             {
-                var moves = placed.Select(i => (i.Entry.Path, v.ToViewPos(i.Rest, screen))).ToList();
+                var moves = placed.Select(p => (p.i.Entry.Path, v.ToViewPos(p.i.Rest, screens))).ToList();
                 var done = v.SetPositions(moves);
                 if (done < moves.Count) error = "partial";
                 undoAction = () =>
@@ -366,7 +414,7 @@ public sealed class AppController
                     try { DesktopReader.OpenView().SetPositions(old); } catch { }
                     m.Result = new RunResult { Title = "Die Symbole sind wieder, wo sie waren" }; m.Changed();
                 };
-                FileOps.AppendLog($"ordnen: {done} Symbole angeordnet");
+                FileOps.AppendLog($"ordnen: {done} Symbole angeordnet auf {screens.Count} Bildschirm(en)");
             }
             catch { error = "partial"; }
         }
@@ -377,6 +425,7 @@ public sealed class AppController
             "partial" => new RunResult { Title = "Ordnen ist nicht ganz fertig geworden", Detail = "Explorer hat nicht jede Position übernommen. Keine Datei wurde verändert.", CanUndo = undoAction != null, IsError = true },
             _ => new RunResult { Title = $"{placed.Count} Elemente in Spalten sortiert", Detail = "Nur die Symbole haben sich bewegt. Deine Dateien sind genau, wo sie waren.", CanUndo = true },
         };
+
         Delay(0.5, () => { m.Applying = false; s.FinishAfterAction(new List<Item>()); m.Changed(); });
     }
 
@@ -385,18 +434,20 @@ public sealed class AppController
     void MinimizeWindows() { minimized.Clear(); minimized.AddRange(DesktopWindows.MinimizeAll()); }
     void RestoreWindows() { DesktopWindows.Restore(minimized); minimized.Clear(); }
 
-    /// The overlay fades to reveal the real desktop, which now matches it.
+    /// The copies fade to reveal the real desktop, which now matches them.
     void FinishRun()
     {
+        if (fading) return;
+        fading = true;
         FileOps.Trace("finish run");
-        var o = overlay;
-        if (o == null) { Teardown(); Model.Stage = Stage.Ready; Model.Changed(); return; }
+        var fading_ = overlays.ToList();
+        if (fading_.Count == 0) { Teardown(); Model.Stage = Stage.Ready; Model.Changed(); return; }
         var sw = Stopwatch.StartNew();
         var t = new DispatcherTimer(DispatcherPriority.Render, ui) { Interval = TimeSpan.FromMilliseconds(16) };
         t.Tick += (_, _) =>
         {
             var k = sw.Elapsed.TotalSeconds / 0.3;
-            try { o.SetAlpha((float)(1 - k)); } catch { }
+            foreach (var o in fading_) try { o.SetAlpha((float)(1 - k)); } catch { }
             if (k < 1) return;
             t.Stop();
             Teardown();
@@ -422,15 +473,19 @@ public sealed class AppController
 
     void StopAndRestore() { Teardown(); Model.Stage = Stage.Ready; Model.Changed(); }
 
-    /// Removing the overlay is the whole restore: the real desktop was never changed.
+    /// Removing the overlays is the whole restore: the real desktop was never changed.
     void Teardown()
     {
         uiTimer?.Stop(); uiTimer = null;
         CompositionTarget.Rendering -= OnFrame;
         synth.SetMotor(0, 0); synth.SetRoar(0);
         synth.StopLive();
-        if (overlay != null) { overlay.Sim = null; overlay.Hide(); overlay.Dispose(); overlay = null; }
+
+        foreach (var o in overlays) { o.Sim = null; o.Hide(); o.Dispose(); }
+        overlays.Clear();
         sim = null; Model.Sim = null;
+        Model.Screens = new List<Screen>();
+        fading = false;
         RestoreWindows();
     }
 }

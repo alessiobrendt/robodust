@@ -62,11 +62,43 @@ public sealed class Screen
     public float Scale;                  // pixels per point
     public V2 SizePts => new(WorkArea.Width / Scale, WorkArea.Height / Scale);
 
-    public static Screen Primary()
+    public bool IsPrimary;
+    public string Name;
+
+    public static Screen Primary() => All().First(s => s.IsPrimary);
+
+    /// Every display, primary first, each with its own scale.
+    public static List<Screen> All()
     {
-        var p = System.Windows.Forms.Screen.PrimaryScreen;
-        return new Screen { Bounds = p.Bounds, WorkArea = p.WorkingArea, Scale = Native.PrimaryScale() };
+        return System.Windows.Forms.Screen.AllScreens
+            .Select(s => new Screen { Bounds = s.Bounds, WorkArea = s.WorkingArea, Scale = Native.ScaleOf(s.Bounds), IsPrimary = s.Primary, Name = s.DeviceName })
+            .OrderByDescending(s => s.IsPrimary).ThenBy(s => s.Bounds.Left).ThenBy(s => s.Bounds.Top).ToList();
     }
+
+    /// A physical screen point, in this display's points relative to its work area.
+    public V2 ToPts(int x, int y) => new((x - WorkArea.Left) / Scale, (y - WorkArea.Top) / Scale);
+
+    /// Where this display's work area sits in the shared world of all displays, in points.
+    public V2 WorldOrigin;
+    public RectF WorldRect => new(WorldOrigin.X, WorldOrigin.Y, SizePts.X, SizePts.Y);
+    public V2 ToWorld(int x, int y) => WorldOrigin + ToPts(x, y);
+    public (int x, int y) FromWorld(V2 w) => ((int)MathF.Round(WorkArea.Left + (w.X - WorldOrigin.X) * Scale), (int)MathF.Round(WorkArea.Top + (w.Y - WorldOrigin.Y) * Scale));
+
+    /// The display a world point belongs to: the one it's on, or the nearest.
+    public static Screen At(List<Screen> screens, V2 w)
+    {
+        Screen best = screens[0]; float bd = float.PositiveInfinity;
+        foreach (var s in screens)
+        {
+            if (s.WorldRect.Contains(w)) return s;
+            var d = (s.WorldRect.Clamp(w) - w).Len;
+            if (d < bd) { bd = d; best = s; }
+        }
+        return best;
+    }
+
+    /// The display under a physical point, if any.
+    public static Screen Under(List<Screen> screens, int x, int y) => screens.FirstOrDefault(s => s.WorkArea.Contains(x, y));
 }
 
 /// Where the real icons are, and what the desktop view will let RoboDust do with them.
@@ -74,23 +106,28 @@ public sealed class DesktopView
 {
     public IFolderView View;
     public IntPtr ListView;
-    public float IconPx = 48;
-    public POINT Spacing = new(75, 75);
+    /// Icon size before display scaling: 48 is "Mittelgroße Symbole". Explorer scales it per display.
+    public float IconPt = 48;
+    public POINT Spacing = new(75, 75);   // pixels at the primary display's scale
     public bool AutoArrange;
     public bool SnapsToGrid;
 
     /// Item position to icon centre, both in list-view pixels. Explorer reports the top-left of the
     /// icon itself, not of its cell: the first column sits at (spacing - icon) / 2.
-    public POINT CenterOffset => new((int)MathF.Round(IconPx / 2), (int)MathF.Round(IconPx / 2 + 2 * Native.PrimaryScale()));
+    public POINT CenterOffset(float scale) => new((int)MathF.Round(IconPt * scale / 2), (int)MathF.Round((IconPt / 2 + 2) * scale));
+
+    /// Label width in points, the same on every display.
+    public float LabelWidthPts => Spacing.X / Native.PrimaryScale();
 
     public POINT Origin { get { var o = new POINT(0, 0); Native.ClientToScreen(ListView, ref o); return o; } }
 
-    /// An icon centre in RoboDust's points, as the item position Explorer wants.
-    public POINT ToViewPos(V2 centerPts, Screen screen)
+    /// An icon centre in world points, as the item position Explorer wants.
+    public POINT ToViewPos(V2 world, List<Screen> screens)
     {
-        var o = Origin; var off = CenterOffset;
-        return new POINT((int)MathF.Round(centerPts.X * screen.Scale + screen.WorkArea.Left - o.X - off.X),
-                         (int)MathF.Round(centerPts.Y * screen.Scale + screen.WorkArea.Top - o.Y - off.Y));
+        var screen = Screen.At(screens, world);
+        var (x, y) = screen.FromWorld(world);
+        var o = Origin; var off = CenterOffset(screen.Scale);
+        return new POINT(x - o.X - off.X, y - o.Y - off.Y);
     }
 
     /// Paths of the items the view currently shows. Read-only.
@@ -162,25 +199,26 @@ public static class DesktopReader
         if (viewObj is IFolderView2 f2)
         {
             // Explorer reports the size before display scaling: 48 is "Mittelgroße Symbole".
-            if (f2.GetViewModeAndIconSize(out _, out var size) == 0 && size > 0 && size <= 256) v.IconPx = size * Native.PrimaryScale();
+            if (f2.GetViewModeAndIconSize(out _, out var size) == 0 && size > 0 && size <= 256) v.IconPt = size;
             if (f2.GetCurrentFolderFlags(out var flags) == 0) { v.SnapsToGrid = (flags & 0x00080000) != 0; v.AutoArrange |= (flags & 0x1) != 0; }
         }
         return v;
     }
 
-    /// Read-only: asks Explorer for the desktop's items and where their icons sit.
-    public static List<DesktopEntry> Read(Screen screen, out DesktopView view)
+    /// Read-only: asks Explorer for the desktop's items and where their icons sit, sorted by the
+    /// display each one is on. The lists line up with the screens passed in.
+    public static List<List<DesktopEntry>> Read(List<Screen> screens, out DesktopView view)
     {
+        Floorplan.Layout(screens);
         view = OpenView();
         var fv = view.View;
         if (fv.ItemCount(Native.SVGIO_ALLVIEW, out var count) != 0) throw new DesktopException("Der Desktop von Explorer antwortet nicht.");
         if (count == 0) throw new DesktopException("Leer", noItems: true);
         var origin = new POINT(0, 0);
         Native.ClientToScreen(view.ListView, ref origin);
-        var off = view.CenterOffset;
         var desk = Path.GetFullPath(DesktopFolder).TrimEnd('\\');
         var showHidden = HiddenFilesShown();
-        var result = new List<DesktopEntry>();
+        var result = screens.Select(_ => new List<DesktopEntry>()).ToList();
         var iid = Native.IID_IShellItem;
         for (int i = 0; i < count; i++)
         {
@@ -188,11 +226,16 @@ public static class DesktopReader
             try
             {
                 if (fv.GetItemPosition(pidl, out var pt) != 0) continue;
-                var sx = origin.X + pt.X + off.X - screen.WorkArea.Left;
-                var sy = origin.Y + pt.Y + off.Y - screen.WorkArea.Top;
-                var c = new V2(sx / screen.Scale, sy / screen.Scale);
+                // The icon's top-left corner says which display it's on; its size there gives the centre.
+                int px = origin.X + pt.X, py = origin.Y + pt.Y;
+                var si_ = screens.FindIndex(s => s.Bounds.Contains(px + 2, py + 2));
+                if (si_ < 0) continue;
+                var screen = screens[si_];
+                var off = view.CenterOffset(screen.Scale);
+                var c = screen.ToPts(px + off.X, py + off.Y);
                 var size = screen.SizePts;
                 if (c.X < 0 || c.Y < 0 || c.X > size.X || c.Y > size.Y) continue;
+                c = screen.WorldOrigin + c;   // one world for all displays
                 var bytes = new byte[Native.ILGetSize(pidl)];
                 Marshal.Copy(pidl, bytes, 0, bytes.Length);
                 string name = null, path = null;
@@ -205,11 +248,11 @@ public static class DesktopReader
                 var e = Entry(path, name ?? "?", c, desk, showHidden);
                 e.Pidl = bytes;
                 e.ViewPos = pt;
-                result.Add(e);
+                result[si_].Add(e);
             }
             finally { Native.ILFree(pidl); }
         }
-        if (result.Count == 0) throw new DesktopException("Leer", noItems: true);
+        if (result.All(r => r.Count == 0)) throw new DesktopException("Leer", noItems: true);
         return result;
     }
 
@@ -290,6 +333,19 @@ public static class DesktopReader
         return names.Select((n, i) => Entry(Path.Combine(full, n), n, Spot(i), full, showHidden)).ToList();
     }
 
+    /// The sample mess on the main display, and a few stragglers on every other one, so there's a
+    /// reason to drive across.
+    public static List<DesktopEntry> SampleAcross(List<Screen> screens)
+    {
+        var list = Sample(screens[0].SizePts);
+        foreach (var s in screens.Skip(1))
+            foreach (var e in Sample(s.SizePts).Where((_, i) => i % 4 == 1))
+            {
+                e.Center = s.WorldOrigin + e.Center;
+                list.Add(e);
+            }
+        return list;
+    }
     /// A believable mess that contains nothing of the user's. Same code path after this point.
     public static List<DesktopEntry> Sample(V2 size)
     {

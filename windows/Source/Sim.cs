@@ -5,11 +5,14 @@ using System.Linq;
 namespace RoboDust;
 
 /// On Windows nothing is ever deleted. Every outcome can be undone.
-public enum CleanMode { Tidy = 0, Move = 1, Hide = 2 }
+public enum CleanMode { Tidy = 0, Move = 1, Hide = 2, Sort = 3 }
+
+/// How "In Ordner" groups things.
+public enum SortBy { Type = 0, Alphabet = 1, Date = 2 }
 
 public static class CleanModeText
 {
-    public static string Title(this CleanMode m) => m switch { CleanMode.Tidy => "Ordnen", CleanMode.Move => "Wegräumen", _ => "Ausblenden" };
+    public static string Title(this CleanMode m) => m switch { CleanMode.Tidy => "Ordnen", CleanMode.Move => "Wegräumen", CleanMode.Sort => "In Ordner", _ => "Ausblenden" };
 }
 
 public enum Phase { Dropping, Undocking, Scanning, Cleaning, Hunting, Returning, Docking, Emptying, Done, Tidying, Tidied, PuttingBack, Leaving, Finished }
@@ -135,13 +138,22 @@ public sealed class Sim
     float tickBudget;
     public Action OnDoneOnce;
 
+    /// The rooms the robot can drive through: one per display, joined by doors.
+    public readonly Floorplan Plan;
+
     public Sim(V2 size, V2 visibleMin, V2 visibleMax, List<DesktopEntry> entries)
+        : this(new Floorplan(new List<RectF> { new(visibleMin.X, visibleMin.Y, visibleMax.X - visibleMin.X, visibleMax.Y - visibleMin.Y) }), entries) { }
+
+    public Sim(Floorplan plan, List<DesktopEntry> entries)
     {
-        Size = size; WallMin = visibleMin; WallMax = visibleMax;
+        Plan = plan;
+        // The dock's room: the main display. Lanes, tidying and the dock all start from here.
+        var main = plan.Rooms[plan.Main];
+        Size = new V2(main.Right, main.Bottom); WallMin = new V2(main.X, main.Y); WallMax = new V2(main.Right, main.Bottom);
         Items = entries.Select((e, i) => new Item(i, e)).ToList();
         TotalBytes = entries.Sum(e => e.Bytes);
-        var dx = DockXOverride ?? BestDockX(Items, size.X);
-        DockPos = new V2(dx, visibleMax.Y - R * 2.08f - 6);
+        var dx = DockXOverride ?? BestDockX(Items.Where(i => main.Contains(i.Home)).ToList(), main.X, main.W);
+        DockPos = new V2(dx, main.Bottom - R * 2.08f - 6);
         Pos = DockPos;
         BinCapacity = Items.Count > 40 ? (int)MathF.Ceiling(Items.Count * 0.55f) : Items.Count + 1;
         SpeedScale = 1 + MathF.Min(Items.Count / 300f, 0.45f);
@@ -150,12 +162,12 @@ public sealed class Sim
     public static float? DockXOverride;
 
     /// Puts the dock on the emptiest stretch of the bottom wall, near the middle.
-    static float BestDockX(List<Item> items, float width)
+    static float BestDockX(List<Item> items, float left, float width)
     {
-        float best = width / 2, bestScore = float.PositiveInfinity;
-        for (float x = 300; x < width - 300; x += 60)
+        float best = left + width / 2, bestScore = float.PositiveInfinity;
+        for (float x = left + 300; x < left + width - 300; x += 60)
         {
-            var score = MathF.Abs(x - width / 2) * 0.002f;
+            var score = MathF.Abs(x - (left + width / 2)) * 0.002f;
             foreach (var it in items) if (MathF.Abs(it.Home.X - x) < 170) score += 1;
             if (score < bestScore) { bestScore = score; best = x; }
         }
@@ -284,13 +296,14 @@ public sealed class Sim
                 {
                     huntTarget = NearestRemaining();
                     huntT = 0;
-                    if (huntTarget != null) { path = new() { ClampToWalk(huntTarget.Icon.Pos) }; PathI = 0; }
+                    if (huntTarget != null) { path = Plan.Route(Pos, huntTarget.Icon.Pos, R + 2); PathI = 0; }
                     else { GoDock(false); break; }
                 }
                 huntT += dt;
                 if (huntTarget != null)
                 {
-                    path = new() { ClampToWalk(huntTarget.Icon.Pos) }; PathI = 0;
+                    // Through a door if it's on another display, straight there if not.
+                    path = Plan.Route(Pos, huntTarget.Icon.Pos, R + 2); PathI = 0;
                     // Something wedged out of reach: reel it in from a distance rather than circle forever.
                     if (huntT > 7) StartIngest(huntTarget, true);
                 }
@@ -423,7 +436,7 @@ public sealed class Sim
     {
         finishing = !mid;
         if (!mid) huntTarget = null;
-        path = new() { DockPos + DockOut * (R * 3.0f) };
+        path = Plan.Route(Pos, DockPos + DockOut * (R * 3.0f), R + 2);
         PathI = 0;
         SetPhase(Phase.Returning);
     }
@@ -440,26 +453,46 @@ public sealed class Sim
         return best;
     }
 
-    V2 ClampToWalk(V2 p) => new(M.Clamp(p.X, WallMin.X + R + 2, WallMax.X - R - 2), M.Clamp(p.Y, WallMin.Y + R + 2, WallMax.Y - R - 2));
+    V2 ClampToWalk(V2 p) => Plan.Clamp(p, R + 2);
 
-    /// Lawn-mower rows over where the mess actually is, starting from the nearest end.
+    /// Lawn-mower rows over where the mess actually is, starting from the nearest end. With several
+    /// displays it mows one room at a time, nearest first, and drives through the door to the next.
     void PlanLanes()
     {
-        var live = Items.Where(i => i.OnFloor).Select(i => i.Icon.Pos).ToList();
         path = new(); PathI = 0;
-        if (live.Count == 0) return;
+        var at = Pos;
+        foreach (var room in Plan.VisitOrder(Pos))
+        {
+            var live = Items.Where(i => i.OnFloor && Plan.RoomOf(i.Icon.Pos) == room).Select(i => i.Icon.Pos).ToList();
+            if (live.Count == 0) continue;
+            var lanes = LanesIn(Plan.Rooms[room], live, at);
+            if (lanes.Count == 0) continue;
+            if (path.Count > 0 || Plan.RoomOf(at) != room)
+            {
+                var route = Plan.Route(at, lanes[0], R + 2);
+                path.AddRange(route.Take(route.Count - 1));
+            }
+            path.AddRange(lanes);
+            at = lanes[^1];
+        }
+        waypointT = 0;
+    }
+
+    List<V2> LanesIn(RectF room, List<V2> live, V2 from)
+    {
+        var stopsOut = new List<V2>();
         var step = R * LaneSpacing;
-        var minY = MathF.Max(live.Min(p => p.Y), WallMin.Y + R + 2);
-        var maxY = MathF.Min(live.Max(p => p.Y), WallMax.Y - R - 2);
+        var minY = MathF.Max(live.Min(p => p.Y), room.Y + R + 2);
+        var maxY = MathF.Min(live.Max(p => p.Y), room.Bottom - R - 2);
         var lanes = new List<(float y, float a, float b)>();
         for (var y = minY; y <= maxY + step * 0.5f; y += step)
         {
             var yy = MathF.Min(y, maxY);
             var band = live.Where(p => MathF.Abs(p.Y - yy) < step * 0.62f).Select(p => p.X).ToList();
-            if (band.Count > 0) lanes.Add((yy, band.Min() - R * 0.5f, band.Max() + R * 0.5f));
+            if (band.Count > 0) lanes.Add((yy, MathF.Max(band.Min() - R * 0.5f, room.X + R + 2), MathF.Min(band.Max() + R * 0.5f, room.Right - R - 2)));
         }
-        if (lanes.Count > 0 && MathF.Abs(lanes[0].y - Pos.Y) > MathF.Abs(lanes[^1].y - Pos.Y)) lanes.Reverse();
-        var x = Pos.X;
+        if (lanes.Count > 0 && MathF.Abs(lanes[0].y - from.Y) > MathF.Abs(lanes[^1].y - from.Y)) lanes.Reverse();
+        var x = from.X;
         foreach (var l in lanes)
         {
             var near = MathF.Abs(l.a - x) < MathF.Abs(l.b - x) ? l.a : l.b;
@@ -474,10 +507,10 @@ public sealed class Sim
                 var over = DockPos.Y + DockOut.Y * R * 2.2f;
                 stops = new() { new(near, l.y), new(first, l.y), new(first, over), new(second, over), new(second, l.y), new(far, l.y) };
             }
-            foreach (var p in stops) { var q = ClampToWalk(p); if (!InsideKeepOut(q)) path.Add(q); }
+            foreach (var p in stops) { var q = room.Inset(R + 2).Clamp(p); if (!InsideKeepOut(q)) stopsOut.Add(q); }
             x = far;
         }
-        waypointT = 0;
+        return stopsOut;
     }
 
     bool InsideKeepOut(V2 p)
@@ -774,10 +807,14 @@ public sealed class Sim
 
     void ClampItem(ref Body b, float pad)
     {
-        if (b.Pos.X < pad) { b.Pos.X = pad; b.Vel.X = MathF.Abs(b.Vel.X) * 0.4f; }
-        if (b.Pos.X > Size.X - pad) { b.Pos.X = Size.X - pad; b.Vel.X = -MathF.Abs(b.Vel.X) * 0.4f; }
-        if (b.Pos.Y < WallMin.Y + pad) { b.Pos.Y = WallMin.Y + pad; b.Vel.Y = MathF.Abs(b.Vel.Y) * 0.4f; }
-        if (b.Pos.Y > WallMax.Y - pad) { b.Pos.Y = WallMax.Y - pad; b.Vel.Y = -MathF.Abs(b.Vel.Y) * 0.4f; }
+        // Paper bounces softly off the outer walls, and slides through doors like the robot does.
+        var q = Plan.Clamp(b.Pos, pad);
+        var d = q - b.Pos;
+        if (d.Len < 0.01f) return;
+        var n = d.Unit;
+        b.Pos = q;
+        var into = b.Vel.Dot(n);
+        if (into < 0) b.Vel -= n * (into * 1.4f);
     }
 
     void PushOutOfDockItem(ref Body b)
@@ -906,7 +943,7 @@ public sealed class Sim
         get
         {
             var tail = RealRun ? "" : " (Vorschau)";
-            return (Discarded == CleanMode.Hide ? "Ausgeblendet" : "Weggeräumt") + tail;
+            return (Discarded switch { CleanMode.Hide => "Ausgeblendet", CleanMode.Sort => "In Ordner sortiert", _ => "Weggeräumt" }) + tail;
         }
     }
 

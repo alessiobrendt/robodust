@@ -39,6 +39,34 @@ public sealed unsafe class Synth : ISimAudio
 
     public void SetMotor(float level, float load) { motorTarget = level; loadTarget = load; }
     public void SetRoar(float level) { roarTarget = level; }
+
+    /// One robot per display, one speaker: each robot gets a channel, and the motor and blower you
+    /// hear are the loudest of them. Every chirp, gulp and thud plays as it is.
+    public sealed class Channel : ISimAudio
+    {
+        readonly Synth s;
+        public float Motor, Load, Roar;
+        public Channel(Synth s) { this.s = s; lock (s.channels) s.channels.Add(this); }
+        public void SetMotor(float level, float load) { Motor = level; Load = load; s.Mix(); }
+        public void SetRoar(float level) { Roar = level; s.Mix(); }
+        public void Ingest(float mass) => s.Ingest(mass);
+        public void Tick() => s.Tick();
+        public void Chirp(params (float f, float d)[] notes) => s.Chirp(notes);
+        public void Thud(float amount) => s.Thud(amount);
+    }
+
+    readonly List<Channel> channels = new();
+    public Channel NewChannel() => new(this);
+    public void ClearChannels() { lock (channels) channels.Clear(); }
+    void Mix()
+    {
+        lock (channels)
+        {
+            float m = 0, l = 0, r = 0;
+            foreach (var c in channels) { m = MathF.Max(m, c.Motor); l = MathF.Max(l, c.Load); r = MathF.Max(r, c.Roar); }
+            motorTarget = m; loadTarget = l; roarTarget = r;
+        }
+    }
     float R(float a, float b) { lock (rnd) return a + (b - a) * (float)rnd.NextDouble(); }
     public void Ingest(float mass)
     {

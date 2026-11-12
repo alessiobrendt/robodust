@@ -42,7 +42,7 @@ public static class Program
             var mode = int.TryParse(Value("--mode"), out var mm) ? (CleanMode)mm : CleanMode.Move;
             var scale = float.TryParse(Value("--pixel-scale"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ps) ? ps : 1;
             var follow = int.TryParse(Value("--follow"), out var f) ? f : 0;
-            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow); }
+            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow, Has("--all-screens")); }
             catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
             return 0;
         }
@@ -56,7 +56,7 @@ public static class Program
         if (Value("--align-test") is { } shot)
         {
             Console_();
-            try { Offline.AlignTest(shot); } catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
+            try { Offline.AlignTest(shot, int.TryParse(Value("--screen"), out var si) ? si : 0); } catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
             return 0;
         }
         if (Has("--read-test"))
@@ -65,12 +65,14 @@ public static class Program
             Console_();
             try
             {
-                var screen = Screen.Primary();
+                var screens = Screen.All();
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var e = DesktopReader.Read(screen, out var view);
+                var lists = DesktopReader.Read(screens, out var view);
+                var e = lists.SelectMany(l => l).ToList();
                 Console.WriteLine($"items {e.Count} explorer {sw.Elapsed.TotalSeconds:0.00}s");
-                Console.WriteLine($"screen {screen.Bounds} work {screen.WorkArea} scale {screen.Scale}");
-                Console.WriteLine($"icon px {view.IconPx} spacing {view.Spacing.X}x{view.Spacing.Y} auto-arrange {view.AutoArrange} grid {view.SnapsToGrid} origin {view.Origin.X},{view.Origin.Y}");
+                for (int i = 0; i < screens.Count; i++)
+                    Console.WriteLine($"screen {i} {screens[i].Bounds} work {screens[i].WorkArea} scale {screens[i].Scale} primary {screens[i].IsPrimary}: {lists[i].Count} items, x {(lists[i].Count > 0 ? lists[i].Min(x => x.Center.X) : 0):0}..{(lists[i].Count > 0 ? lists[i].Max(x => x.Center.X) : 0):0} pts of {screens[i].SizePts}");
+                Console.WriteLine($"icon {view.IconPt}pt spacing {view.Spacing.X}x{view.Spacing.Y} auto-arrange {view.AutoArrange} grid {view.SnapsToGrid} origin {view.Origin.X},{view.Origin.Y}");
                 foreach (var g in e.GroupBy(x => x.Kind).OrderBy(g => g.Key)) Console.WriteLine($"  {g.Key}: {g.Count()}");
                 Console.WriteLine($"left alone {e.Count(x => x.ProtectedReason != null)}, not files {e.Count(x => x.Missing)}, cloud {e.Count(x => x.Cloud)}");
                 foreach (var g in e.Where(x => x.ProtectedReason != null).GroupBy(x => x.ProtectedReason)) Console.WriteLine($"  {g.Key}: {g.Count()}");
@@ -82,8 +84,8 @@ public static class Program
                 Native.GetWindowRect(view.ListView, out var lr);
                 Console.WriteLine($"listview class {Native.ClassOf(view.ListView)} rect {lr.Left},{lr.Top} {lr.Width}x{lr.Height}");
                 sw.Restart();
-                Metrics.IconHalf = view.IconPx / screen.Scale / 2;
-                Sprites.TexScale = MathF.Max(2, screen.Scale);
+                Metrics.IconHalf = view.IconPt / 2;
+                Sprites.TexScale = MathF.Max(2, screens.Max(s => s.Scale));
                 var sprites = Sprites.BuildNow(e);
                 Console.WriteLine($"sprites {sprites.Count} {sw.Elapsed.TotalSeconds:0.00}s");
             }
@@ -98,6 +100,8 @@ public static class Program
         controller.AutoPutBack = Has("--auto-putback");
         controller.AutoUndo = Has("--auto-undo");
         controller.AutoQuit = Has("--auto-quit");
+        if (double.TryParse(Value("--auto-stop"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var stopAfter)) controller.AutoStop = stopAfter;
+        if (Has("--real")) controller.Model.Source = Source.Real;
         if (Has("--no-save")) Settings.Persists = false;
         if (Value("--test-root") is { } root)
         {

@@ -8,7 +8,7 @@ A robot vacuum for your Mac desktop. It drives around your screen and eats your 
 
 **[Download for Mac](https://robodust.muhraufan.com/releases/RoboDust-latest.dmg)** (4 MB, free, macOS 14 or later, Apple silicon and Intel) or [play with it in your browser](https://robodust.muhraufan.com/#demo)
 
-There's also a [Windows version](windows/README.md), built from the same simulation and shaders. It never deletes anything: it sorts your icons, moves everything into a folder of its own, or hides it, and all of that can be undone.
+There's also a [Windows version](windows/README.md), developed by Alessio Brendt and built from the same simulation and shaders. It never deletes anything: it sorts your icons, moves everything into a folder of its own, or hides it, and all of that can be undone.
 
 I had 300-something things on my desktop, mostly screenshots, and no plans to sort them. Then I saw someone make an app that lets you hide your desktop under a rug, and it was so good that I got annoyed I hadn't thought of it. So I made the version where you hire a robot instead.
 
@@ -74,7 +74,7 @@ Bug reports and ideas are very welcome, and so are pull requests. Please read [C
 
 ## Thanks
 
-Updates are handled by [Sparkle](https://sparkle-project.org). The meows are Elix, recorded by Joseph Sardin for [BigSoundBank](https://bigsoundbank.com/small-mewing-of-a-cat-s0098.html) (CC0). The app is designed by me, [Raufan](https://muhraufan.com), with a lot of implementation help from Claude.
+Updates are handled by [Sparkle](https://sparkle-project.org). The meows are Elix, recorded by Joseph Sardin for [BigSoundBank](https://bigsoundbank.com/small-mewing-of-a-cat-s0098.html) (CC0). The app is designed by me, [Raufan](https://muhraufan.com), with a lot of implementation help from Claude. The Windows version is developed by Alessio Brendt.
 
 If it made you smile, a star is nice, and you can also [buy me a coffee](https://www.buymeacoffee.com/notmegapixels).
 

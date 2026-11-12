@@ -19,6 +19,7 @@ public sealed class RunResult
 public sealed class Settings
 {
     public int Mode { get; set; } = (int)CleanMode.Move;
+    public int SortBy { get; set; }
     public bool SkipFinalClick { get; set; }
     public bool ClearWindows { get; set; } = true;
     public bool SupportCardShown { get; set; }
@@ -45,6 +46,7 @@ public sealed class Model
     public Stage Stage = Stage.Ready;
     public Source Source = Source.Sample;
     public CleanMode Mode { get => (CleanMode)Settings.Mode; set { Settings.Mode = (int)value; Settings.Save(); } }
+    public SortBy SortBy { get => (SortBy)Settings.SortBy; set { Settings.SortBy = (int)value; Settings.Save(); } }
     public bool SkipFinalClick { get => Settings.SkipFinalClick; set { Settings.SkipFinalClick = value; Settings.Save(); } }
     public bool ClearWindows { get => Settings.ClearWindows; set { Settings.ClearWindows = value; Settings.Save(); } }
     public CleanMode? Outcome;
@@ -70,6 +72,7 @@ public sealed class Model
     public long CollectedBytes, TotalBytes;
     public float RunTime;
     public Sim Sim;
+    public List<Screen> Screens = new();
 
     public Action Start, TogglePause, Stop, PutBack, About, Undo, DismissResult, UndoLast, OpenShelf, Quit;
     public Action<CleanMode> Choose;
