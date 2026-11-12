@@ -79,7 +79,7 @@ public sealed class Item
     public bool OnFloor => !InBin && !InDock && Flight == Flight.None && !Icon.Gone && !Protected;
 }
 
-public enum PartKind { Dust = 0, Fire = 1, Smoke = 2, Bubble = 3, Confetti = 4, Glow = 5, Ash = 6, Swirl = 7, Snow = 8 }
+public enum PartKind { Dust = 0, Fire = 1, Smoke = 2, Bubble = 3, Confetti = 4, Glow = 5, Ash = 6, Swirl = 7, Snow = 8, Ribbon = 9 }
 
 public struct Particle
 {

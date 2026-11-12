@@ -450,6 +450,9 @@ public sealed unsafe class Renderer
                 case PartKind.Snow:
                     a = q.A * M.Smooth(0, 0.03f, k) * M.Smooth(1, 0.985f, k);
                     break;
+                case PartKind.Ribbon:
+                    a = q.A * M.Smooth(0, 0.6f, k);   // stays, then fades
+                    break;
                 case PartKind.Swirl:
                     a = q.A * MathF.Sin(k * M.Pi);
                     break;

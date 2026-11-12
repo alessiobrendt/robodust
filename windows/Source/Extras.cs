@@ -51,34 +51,7 @@ public sealed partial class Sim
         UpdatePet(dt);
         UpdateCoins(dt);
         // Trails from the shop, left behind as it drives.
-        if (Look.Trail != 0 && !Picked && MathF.Abs(V) > 40 && Phase is not (Phase.Dropping or Phase.Leaving or Phase.Finished))
-        {
-            trailAcc += dt * (Look.Trail == 3 ? 40 : 30);
-            while (trailAcc >= 1)
-            {
-                trailAcc -= 1;
-                var at = Pos - Fwd * (R * 0.9f) + Side * Rand(-R * 0.6f, R * 0.6f);
-                switch (Look.Trail)
-                {
-                    case 1:   // rainbow: bands of colour, slowly fading where it went
-                    {
-                        var s = Rand(-1, 1);
-                        var (r, g, b) = Hue(0.5f + s * 0.5f * 0.85f);
-                        SpawnFun(PartKind.Glow, Pos - Fwd * (R * 0.9f) + Side * (s * R * 0.6f), V2.Zero, 1.6f, 7, r, g, b, 0.35f);
-                        break;
-                    }
-                    case 2:   // smoke
-                        SpawnFun(PartKind.Smoke, at, -Fwd * Rand(20, 60) + new V2(Rand(-15, 15), Rand(-15, 15)), Rand(1.2f, 2), Rand(9, 14), 0.85f, 0.85f, 0.87f, 0.35f);
-                        break;
-                    default:  // glitter
-                    {
-                        var (r, g, b) = Rand() < 0.5f ? (1f, 0.9f, 0.5f) : (0.85f, 0.95f, 1f);
-                        SpawnFun(PartKind.Glow, at, new V2(Rand(-10, 10), Rand(-10, 10)), Rand(0.5f, 1.1f), Rand(1.2f, 2.4f), r, g, b, 1);
-                        break;
-                    }
-                }
-            }
-        }
+        if (Look.Trail != 0 && !Picked && Phase is not (Phase.Dropping or Phase.Leaving or Phase.Finished)) EmitTrail(MathF.Abs(V) * dt);
         // Exhaust flames: a few licks of fire out of the back whenever it puts its foot down.
         if (Look.Exhaust && !Picked && MathF.Abs(V) > 60)
         {
@@ -92,6 +65,43 @@ public sealed partial class Sim
         }
     }
 
+
+    float trailDist;
+
+    /// Lays down the shop trail for this much distance driven: a row every few points, so the trail
+    /// is one continuous band however fast it goes. Public so the shop preview can draw it too.
+    public void EmitTrail(float distance)
+    {
+        trailDist += distance;
+        while (trailDist >= 7)
+        {
+            trailDist -= 7;
+            switch (Look.Trail)
+            {
+                case 1:   // rainbow: seven bands of colour side by side, fading slowly
+                    for (int i = 0; i < 7; i++)
+                    {
+                        var across = (i / 6f - 0.5f) * R * 1.1f;
+                        var (r, g, b) = Hue(i / 7f);
+                        SpawnFun(PartKind.Ribbon, Pos - Fwd * (R * 0.85f) + Side * across, V2.Zero, 2.2f, 8.5f, r, g, b, 0.8f);
+                    }
+                    break;
+                case 2:   // smoke: thick and grey, so it shows on light wallpaper too
+                    for (int i = 0; i < 2; i++)
+                        SpawnFun(PartKind.Smoke, Pos - Fwd * (R * 0.9f) + Side * Rand(-R * 0.45f, R * 0.45f), -Fwd * Rand(15, 50) + new V2(Rand(-12, 12), Rand(-12, 12)), Rand(1.4f, 2.2f), Rand(11, 16), 0.62f, 0.62f, 0.65f, 0.6f);
+                    break;
+                default:  // glitter: little coloured flakes that twinkle where it went
+                    for (int i = 0; i < 3; i++)
+                    {
+                        var pick = (int)(Rand() * 4);
+                        var (r, g, b) = pick switch { 0 => (1f, 0.82f, 0.25f), 1 => (1f, 0.45f, 0.8f), 2 => (0.4f, 0.9f, 1f), _ => (1f, 1f, 1f) };
+                        SpawnFun(PartKind.Confetti, Pos - Fwd * (R * 0.85f) + Side * Rand(-R * 0.6f, R * 0.6f), V2.Zero, Rand(1.2f, 2f), Rand(2.2f, 3.6f), r, g, b, 1, chip: 1.2f);
+                    }
+                    if (Rand() < 0.4f) SpawnFun(PartKind.Glow, Pos - Fwd * (R * 0.85f) + Side * Rand(-R * 0.6f, R * 0.6f), V2.Zero, 0.6f, 3, 1, 1, 1, 1);
+                    break;
+            }
+        }
+    }
     // MARK: Pet
 
     void UpdatePet(float dt)

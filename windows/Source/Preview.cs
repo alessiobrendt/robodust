@@ -73,8 +73,13 @@ public sealed unsafe class ShopPreview : IDisposable
         var s = sim;
         s.Look = look; r.Look = look;
         s.T = t;
-        s.Pos = new V2(210, 150);
-        s.Heading = -MathF.PI / 2 + t * 0.55f;
+        // It drives a slow circle, so trails show; without a trail it just turns on the spot.
+        var drive = look.Trail != 0;
+        var ang = t * 0.9f;
+        var lastPos = s.Pos;
+        s.Pos = drive ? new V2(210, 150) + new V2(MathF.Cos(ang), MathF.Sin(ang)) * 48 : new V2(210, 150);
+        s.Heading = drive ? ang + MathF.PI / 2 : -MathF.PI / 2 + t * 0.55f;
+        if (drive) s.EmitTrail((s.Pos - lastPos).Len < 50 ? (s.Pos - lastPos).Len : 0);
         s.BrushSpeed = 22; s.BrushAngle = t * 22; s.LidarAngle = t * 12; s.LedPulse = t;
         s.Led = look.Skin == RobotSkin.Neon ? new V3(0.1f, 1, 0.85f) : new V3(0.2f, 0.85f, 1);
         // The pet sits beside it and watches it turn.
