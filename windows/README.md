@@ -83,6 +83,16 @@ Hinter dem Knopf „Einstellungen“ findest du:
 
 Auf der Startseite steht, was RoboDust bisher geschafft hat, und „Ablage“ zeigt, was dort liegt, mit Größe und Alter. Gelöscht wird dort nichts: Das machst du selbst im Explorer.
 
+## Shop
+
+Für jede aufgeräumte Datei gibt es eine Münze, und beim Aufräumen liegen Münzen auf dem Desktop (fünf pro Stück), die der Roboter mit einsaugt. Im **Shop** gibt es dafür Skins (Carbon, Chrom, Tarnmuster, Neon, Galaxie), Hüte (Krone, Zylinder, Cowboyhut, Weihnachtsmütze, Propellermütze), Tuning (Heckspoiler, Rennstreifen, Flammen-Lackierung, Neon-Unterboden, Auspuff-Flammen) und Haustiere, die hinter dem Roboter herlaufen (Dackel, Golden Retriever, Kater, Eichhörnchen). Oben im Shop dreht sich der Roboter in einer Live-Vorschau; ein Klick auf ein Teil probiert es an, ohne es zu kaufen.
+
+Münzen geben (oder mit Minus nehmen), auch während RoboDust läuft:
+
+```
+RoboDust.exe --coins 500
+```
+
 ## Mehrere Bildschirme
 
 Ein Roboter fährt über alle Bildschirme. RoboDust legt die Monitore so nebeneinander, wie sie bei dir stehen, und behandelt jeden als Raum einer Wohnung. Wo sich zwei Bildschirme berühren, ist eine Tür, durch die der Roboter hinüberfährt. Die Station steht auf dem Hauptbildschirm, oder auf dem Monitor, den du unter „Station steht auf“ auswählst. Dort startet der Roboter, und dorthin fährt er zum Entleeren. Monitore mit unterschiedlicher Skalierung sind kein Problem, und Win+D bringt RoboDust nicht aus dem Tritt.

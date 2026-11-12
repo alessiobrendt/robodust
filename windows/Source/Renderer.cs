@@ -26,8 +26,10 @@ public sealed unsafe class Renderer
     public readonly V2 SizePts;
     readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade;
     public RobotSkin Skin;
+    public Look Look;          // hats, tuning and pet from the shop; Skin and Hat are kept in step
+    float botTime;
     readonly CatRenderer catR;
-    int squirrelBase;
+    int squirrelBase, petBase;
     public bool Hat;
     readonly uint emptyVao, spriteVao, partVao, gridBuf, instBuf, partBuf;
     readonly int gridCount;
@@ -171,6 +173,8 @@ public sealed unsafe class Renderer
         var icons = s.ConvertAll(x => x.Icon);
         squirrelBase = icons.Count;
         icons.AddRange(SquirrelArt.Frames());
+        petBase = icons.Count;
+        icons.AddRange(PetArt.Frames());
         iconTex = ArrayTexture(icons, Sprites.IconTex, Sprites.IconTex);
         labelTex = ArrayTexture(s.ConvertAll(x => x.Label), Sprites.LabelW, Sprites.LabelH);
     }
@@ -278,6 +282,26 @@ public sealed unsafe class Renderer
             }
         }
 
+        // Coins lying on the floor, turning in the light.
+        foreach (var c in sim.Coins)
+        {
+            if (c.Gone || sim.Phase >= Phase.Leaving) continue;
+            ground.Add(new Inst
+            {
+                Center = c.Pos, Half = new V2(15, 15), Intake = c.Pos + new V2(0, 100000), Scale = 1 - c.Pull * 0.6f, Alpha = 1,
+                Slice = petBase + PetArt.CoinOffset + ((int)c.Spin % PetArt.CoinFrames), ShadowOffset = new V2(2, 3), ShadowAlpha = 0.25f,
+            });
+        }
+        // A pet from the shop, trotting along.
+        if (sim.Pet is { } pet && sim.RobotAlpha > 0.05f && sim.DockDrop > 0.9f)
+        {
+            var slice = pet.Kind == PetKind.Squirrel ? squirrelBase + (pet.Frame == 4 ? SquirrelArt.Sit : pet.Frame) : petBase + PetArt.Offset(pet.Kind) + pet.Frame;
+            top.Add(new Inst
+            {
+                Center = pet.Pos, Half = new V2(54, 54), Intake = pet.Pos + new V2(0, 100000), Angle = pet.Heading + M.Pi / 2, Scale = 1, Alpha = sim.RobotAlpha,
+                Slice = slice, ShadowOffset = new V2(3, 5), ShadowAlpha = 0.3f,
+            });
+        }
         // The Eichhörnchen-Bande, on top of the files: they run over them.
         foreach (var sq in sim.Squirrels)
         {
@@ -465,6 +489,11 @@ public sealed unsafe class Renderer
         RobotSkin.Retro => (new V3(0.86f, 0.80f, 0.66f), new V3(0.42f, 0.33f, 0.24f), 0.18f, 0),
         RobotSkin.Pink => (new V3(0.97f, 0.62f, 0.76f), new V3(0.12f, 0.06f, 0.09f), 0.35f, 0),
         RobotSkin.Squirrel => (new V3(0.77f, 0.36f, 0.13f), new V3(0.26f, 0.13f, 0.05f), 0.22f, 0),
+        RobotSkin.Carbon => (new V3(0.09f, 0.09f, 0.1f), new V3(0.03f, 0.03f, 0.035f), 0.8f, 0),
+        RobotSkin.Chrome => (new V3(0.86f, 0.87f, 0.9f), new V3(0.06f, 0.06f, 0.07f), 1f, 1f),
+        RobotSkin.Camo => (new V3(0.3f, 0.34f, 0.2f), new V3(0.1f, 0.11f, 0.07f), 0.1f, 0),
+        RobotSkin.Galaxy => (new V3(0.06f, 0.04f, 0.14f), new V3(0.02f, 0.015f, 0.05f), 0.7f, 0),
+        RobotSkin.Neon => (new V3(0.03f, 0.03f, 0.03f), new V3(0.015f, 0.015f, 0.02f), 0.6f, 0),
         _ => (new V3(0.90f, 0.90f, 0.88f), new V3(0.055f, 0.058f, 0.065f), 0.28f, 0),
     };
 
@@ -474,10 +503,17 @@ public sealed unsafe class Renderer
         public float Heading, R, Scale, Alpha, Height, BrushAngle, BrushSpeed, Lidar, Bumper, LedPulse;
         public V3 Led;
         public RobotSkin Skin;
+        public Look Look;
         public bool Hat;
     }
 
     void DrawRobot(Sim sim)
+    {
+        botTime = sim.T;
+        DrawRobots(sim);
+    }
+
+    void DrawRobots(Sim sim)
     {
         var drop = sim.DockDrop;
         var bounce = 1 - MathF.Pow(1 - drop, 3);
@@ -496,7 +532,7 @@ public sealed unsafe class Renderer
             {
                 Pos = rv.Pos, Heading = rv.Heading, R = rv.R * dropScale, Scale = dropScale, Alpha = alpha, Height = 1 - bounce,
                 BrushL = rl, BrushR = rr, BrushAngle = rv.BrushAngle, BrushSpeed = rv.BrushSpeed, Lidar = rv.LidarAngle, LedPulse = rv.LedPulse,
-                Led = rv.Led, Skin = rv.Skin,
+                Led = rv.Led, Skin = rv.Skin, Look = new Look { Skin = rv.Skin },
             });
         }
         // The snowplow's blade sits in front, under the bumper.
@@ -514,7 +550,7 @@ public sealed unsafe class Renderer
         {
             Pos = sim.Pos, Heading = sim.Heading, R = sim.R * scale, Scale = scale, Alpha = alpha, Height = (1 - bounce) + liftK * 0.9f, Shake = shakeP,
             BrushL = l, BrushR = r, BrushAngle = sim.BrushAngle, BrushSpeed = sim.BrushSpeed, Lidar = sim.LidarAngle, Bumper = sim.Bumper, LedPulse = sim.LedPulse,
-            Led = sim.Led, Skin = Skin, Hat = Hat,
+            Led = sim.Led, Skin = Look.Skin, Hat = Look.Hat == 1, Look = Look,
         });
     }
 
@@ -545,7 +581,15 @@ public sealed unsafe class Renderer
             var plate = stackalloc float[3] { sk.plate.X, sk.plate.Y, sk.plate.Z };
             Gl.Uniform3fv(pRobot["bodyCol"], 1, body); Gl.Uniform3fv(pRobot["plateCol"], 1, plate);
         }
-        pRobot.F("bodyGloss", sk.gloss); pRobot.F("bodyMetal", sk.metal); pRobot.F("hat", b.Hat ? 1 : 0); pRobot.F("ears", b.Skin == RobotSkin.Squirrel ? 1 : 0);
+        pRobot.F("bodyGloss", sk.gloss); pRobot.F("bodyMetal", sk.metal); pRobot.F("hat", 0); pRobot.F("ears", b.Skin == RobotSkin.Squirrel ? 1 : 0);
+        var lk = b.Look;
+        Gl.Uniform1i(pRobot["hatKind"], lk.Hat);
+        Gl.Uniform1i(pRobot["pattern"], b.Skin switch { RobotSkin.Carbon => 1, RobotSkin.Camo => 2, RobotSkin.Galaxy => 3, RobotSkin.Neon => 4, _ => 0 });
+        pRobot.F("spoiler", lk.Spoiler ? 1 : 0);
+        Gl.Uniform1i(pRobot["decal"], lk.Decal);
+        pRobot.F4("glow", 0.15f, 0.55f, 1f, lk.Glow ? 1 : 0);
+        pRobot.F("time", botTime);
+        pRobot.F("quadScale", lk.Spoiler ? 1.34f : lk.Glow ? 1.32f : 1.03f);
         Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, logoTex); pRobot.I("logo", 0);
         Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
     }

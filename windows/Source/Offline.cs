@@ -14,7 +14,7 @@ namespace RoboDust;
 public static unsafe class Offline
 {
     /// allScreens: the sample mess spread over every display, drawn as one picture of the whole floor.
-    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow, bool allScreens = false, int dock = -1, FunMode fun = FunMode.Off, RobotSkin skin = RobotSkin.White, bool hat = false, int cat = -1)
+    public static void Dump(float[] times, string outDir, CleanMode mode, bool plainFloor, float pixelScale, int follow, bool allScreens = false, int dock = -1, FunMode fun = FunMode.Off, RobotSkin skin = RobotSkin.White, bool hat = false, int cat = -1, string look = null)
     {
         Directory.CreateDirectory(outDir);
         var screens = allScreens ? Screen.All() : new List<Screen> { Screen.Primary() };
@@ -36,6 +36,14 @@ public static unsafe class Offline
         r.SetSprites(sprites);
         var s = new Sim(plan, entries) { Mode = mode, SkipFinalClick = true, Fun = fun, Skin = skin };
         if (cat >= 0) s.Cat = CatActor.PickMood((CatActor.Mood)cat);
+        // --look "skin=7,hat=2,spoiler,glow,exhaust,decal=2,pet=1"
+        var lk = new Look { Skin = skin, Hat = hat ? 1 : 0 };
+        foreach (var part in (look ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var kv = part.Split('='); int.TryParse(kv.Length > 1 ? kv[1] : "1", out var v);
+            switch (kv[0]) { case "skin": lk.Skin = (RobotSkin)v; break; case "hat": lk.Hat = v; break; case "spoiler": lk.Spoiler = true; break; case "glow": lk.Glow = true; break; case "exhaust": lk.Exhaust = true; break; case "decal": lk.Decal = v; break; case "pet": lk.Pet = (PetKind)v; break; }
+        }
+        s.Look = lk; r.Look = lk; s.Skin = lk.Skin;
         for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
 
         int W = (int)(size.X * pixelScale), H = (int)(size.Y * pixelScale);

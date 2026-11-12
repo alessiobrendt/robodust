@@ -57,6 +57,8 @@ public sealed unsafe class Synth : ISimAudio
         public void Flame(float seconds) => s.Flame(seconds);
         public void Pop() => s.Pop();
         public void Popper() => s.Popper();
+        public void Bark() => s.Bark();
+        public void PetMeow() => s.PetMeow();
     }
 
     readonly List<Channel> channels = new();
@@ -91,6 +93,11 @@ public sealed unsafe class Synth : ISimAudio
     public void Thud(float a) => Enqueue(new Voice { Kind = 3, Dur = 0.26f, F0 = 118, F1 = 46, Amp = 0.85f * a }, new Voice { Kind = 1, Dur = 0.09f, F0 = 1400, F1 = 300, Amp = 0.26f * a });
     public void Flame(float seconds) => Enqueue(new Voice { Kind = 4, Dur = seconds + 0.15f, Amp = 0.32f });
     public void Pop() => Enqueue(new Voice { Kind = 5, Dur = 0.06f, F0 = R(1400, 2400), Amp = 0.07f });
+    /// A small dog's "wuff wuff": a bark is a quick noise burst closing down over a low thump.
+    public void Bark() => Enqueue(
+        new Voice { Kind = 1, Dur = 0.12f, F0 = 1100, F1 = 260, Amp = 0.5f }, new Voice { Kind = 3, Dur = 0.12f, F0 = 240, F1 = 120, Amp = 0.35f },
+        new Voice { Kind = 1, Dur = 0.12f, F0 = 1100, F1 = 260, Amp = 0.45f, Delay = 0.2f }, new Voice { Kind = 3, Dur = 0.12f, F0 = 240, F1 = 120, Amp = 0.3f, Delay = 0.2f });
+    public void PetMeow() => Cat.Meow((int)R(0, 3.99f), R(1.05f, 1.2f), 0.45f);
     /// A party popper: a crack, a hiss of paper, and a little fanfare.
     public void Popper()
     {

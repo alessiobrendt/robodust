@@ -11,6 +11,8 @@ public static class Program
     [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
 
     static string[] args;
+    /// Names for the signals between a second start and the running RoboDust, in this user's session.
+    const string Ipc = @"Local\RoboDust.";
     static string Value(string flag) { var i = Array.IndexOf(args, flag); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
     static bool Has(string flag) => args.Contains(flag);
 
@@ -57,11 +59,23 @@ public static class Program
             var mode = int.TryParse(Value("--mode"), out var mm) ? (CleanMode)mm : CleanMode.Move;
             var scale = float.TryParse(Value("--pixel-scale"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ps) ? ps : 1;
             var follow = int.TryParse(Value("--follow"), out var f) ? f : 0;
-            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow, Has("--all-screens"), int.TryParse(Value("--dock-screen"), out var ds) ? ds : -1, int.TryParse(Value("--fun"), out var fn) ? (FunMode)fn : FunMode.Off, int.TryParse(Value("--skin"), out var sk) ? (RobotSkin)sk : RobotSkin.White, Has("--hat"), int.TryParse(Value("--cat"), out var dc) ? dc : -1); }
+            try { Offline.Dump(times, Value("--out") ?? ".", mode, Has("--plain-floor"), scale, follow, Has("--all-screens"), int.TryParse(Value("--dock-screen"), out var ds) ? ds : -1, int.TryParse(Value("--fun"), out var fn) ? (FunMode)fn : FunMode.Off, int.TryParse(Value("--skin"), out var sk) ? (RobotSkin)sk : RobotSkin.White, Has("--hat"), int.TryParse(Value("--cat"), out var dc) ? dc : -1, Value("--look")); }
             catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
             return 0;
         }
         if (Value("--write-icon") is { } ico) { AppIcon.WriteIco(ico); return 0; }
+        if (Value("--coins") is { } give)
+        {
+            // Gives (or with a minus, takes) shop coins. A running RoboDust picks them up straight away.
+            Console_();
+            if (!int.TryParse(give, out var n)) { Console.WriteLine("Aufruf: RoboDust.exe --coins 500"); return 2; }
+            var st = Settings.Load();
+            st.Coins = Math.Max(0, st.Coins + n);
+            st.Save();
+            try { System.Threading.EventWaitHandle.OpenExisting(Ipc + @"Coins").Set(); } catch { }
+            Console.WriteLine($"Münzen: {st.Coins}");
+            return 0;
+        }
         if (Value("--panel-shot") is { } shots)
         {
             Console_();
@@ -143,14 +157,15 @@ public static class Program
         System.Threading.Mutex single = null;
         if (plain)
         {
-            single = new System.Threading.Mutex(true, @"LocalRoboDust.Single", out var first);
+            single = new System.Threading.Mutex(true, Ipc + @"Single", out var first);
             if (!first)
             {
-                try { System.Threading.EventWaitHandle.OpenExisting(Has("--scheduled") ? @"LocalRoboDust.Scheduled" : @"LocalRoboDust.Show").Set(); } catch { }
+                try { System.Threading.EventWaitHandle.OpenExisting(Has("--scheduled") ? Ipc + @"Scheduled" : Ipc + @"Show").Set(); } catch { }
                 return 0;
             }
-            Listen(@"LocalRoboDust.Show", () => controller.ShowPanel());
-            Listen(@"LocalRoboDust.Scheduled", () => controller.StartScheduled());
+            Listen(Ipc + @"Show", () => controller.ShowPanel());
+            Listen(Ipc + @"Scheduled", () => controller.StartScheduled());
+            Listen(Ipc + @"Coins", () => controller.ReloadCoins());
         }
         app.Startup += (_, _) => controller.Start();
         app.DispatcherUnhandledException += (_, e) =>

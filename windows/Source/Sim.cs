@@ -102,6 +102,8 @@ public interface ISimAudio
     void Flame(float seconds) { }
     void Pop() { }
     void Popper() { }
+    void Bark() { }
+    void PetMeow() { }
 }
 
 /// A straight port of the Mac simulation. Only the outcomes differ: nothing is deleted.
@@ -219,6 +221,7 @@ public sealed partial class Sim
         IntegrateRobot(dt);
         UpdateItems(dt);
         UpdateFun(dt);
+        UpdateExtras(dt);
         UpdateParticles(dt);
         Heavy *= MathF.Exp(-dt * 3);
         Bumper *= MathF.Exp(-dt * 7);
@@ -483,7 +486,7 @@ public sealed partial class Sim
         var at = Pos;
         foreach (var room in Plan.VisitOrder(Pos))
         {
-            var live = Items.Where(i => i.OnFloor && !i.Carried && !InPileNow(i) && Plan.RoomOf(i.Icon.Pos) == room).Select(i => i.Icon.Pos).ToList();
+            var live = Items.Where(i => i.OnFloor && !i.Carried && !InPileNow(i) && Plan.RoomOf(i.Icon.Pos) == room).Select(i => i.Icon.Pos).Concat(CoinSpots(room)).ToList();
             if (live.Count == 0) continue;
             var lanes = LanesIn(Plan.Rooms[room], live, at);
             if (lanes.Count == 0) continue;

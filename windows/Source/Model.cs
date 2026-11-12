@@ -28,8 +28,8 @@ public sealed class Stats
     }
 }
 
-public enum Page { Main, Settings, Shelf }
-public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4, Squirrel = 5 }
+public enum Page { Main, Settings, Shelf, Shop }
+public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4, Squirrel = 5, Carbon = 6, Chrome = 7, Camo = 8, Galaxy = 9, Neon = 10 }
 
 public sealed class RunResult
 {
@@ -58,6 +58,15 @@ public sealed class Settings
     public bool Autostart { get; set; }
     public bool Hotkey { get; set; }
     public bool HasCat { get; set; }
+    // Shop.
+    public int Coins { get; set; }
+    public List<string> Owned { get; set; } = new();
+    public int HatKind { get; set; }           // 0 none, 1 party, 2 crown, 3 top hat, 4 cowboy, 5 santa, 6 propeller
+    public bool Spoiler { get; set; }
+    public int Decal { get; set; }             // 0 none, 1 racing stripes, 2 flames
+    public bool Glow { get; set; }             // neon underglow
+    public bool Exhaust { get; set; }          // exhaust flames
+    public int Pet { get; set; }               // PetKind
     public Stats Stats { get; set; } = new();
 
     public static bool Persists = true;

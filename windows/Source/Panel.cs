@@ -126,6 +126,7 @@ public sealed class Panel : Window
     {
         root.Children.Clear();
         statusText = null; batteryBar = null; map = null; questionText = null; goButton = null;
+        if (model.Page != Page.Shop || model.Stage != Stage.Ready) StopPreview();
         root.Children.Add(Header());
         var body = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
         root.Children.Add(body);
@@ -140,6 +141,7 @@ public sealed class Panel : Window
                     body.Children.Add(new ScrollViewer { Content = inner, MaxHeight = Math.Max(300, SystemParameters.WorkArea.Height - 170), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 6, 0) });
                 }
                 else if (model.Page == Page.Shelf) ShelfPage(body);
+                else if (model.Page == Page.Shop) ShopPage(body);
                 else Setup(body);
                 break;
             case Stage.Preparing: Preparing(body); break;
@@ -409,9 +411,12 @@ public sealed class Panel : Window
             stats.Margin = new Thickness(0, 14, 0, 0);
             body.Children.Add(stats);
         }
+        var shopBtn = Btn($"Shop · ● {m.Settings.Coins:N0}", Kind.Quiet, () => { m.Page = Page.Shop; m.Changed(); }, "");
+        shopBtn.Margin = new Thickness(0, 14, 0, 0);
+        body.Children.Add(shopBtn);
         var nav = Row(8, Btn("Einstellungen", Kind.Quiet, () => { m.Page = Page.Settings; m.Changed(); }, ""),
                          Btn("Ablage", Kind.Quiet, () => { m.Page = Page.Shelf; m.Changed(); }, ""));
-        ((FrameworkElement)nav).Margin = new Thickness(0, 14, 0, 0);
+        ((FrameworkElement)nav).Margin = new Thickness(0, 8, 0, 0);
         body.Children.Add(nav);
     }
 
@@ -454,11 +459,6 @@ public sealed class Panel : Window
         var catText = Text("Eine von sechs Katzen kommt zu Besuch: Sie beaufsichtigt, schläft auf dem Roboter, fährt mit, kämpft, schubst Dateien weg oder versteckt sich. Du kannst sie hochheben.");
         catText.Margin = new Thickness(0, 2, 0, 0);
         body.Children.Add(Field("Katze", Switch("Ich habe eine Katze", s.HasCat, v => m.Set(() => s.HasCat = v)), catText));
-        var hat = Switch("Mit Partyhut", s.Hat, v => m.Set(() => s.Hat = v));
-        ((FrameworkElement)hat).Margin = new Thickness(0, 10, 0, 0);
-        body.Children.Add(Field("Aussehen",
-            Segmented(new List<(RobotSkin, string)> { (RobotSkin.White, "Weiß"), (RobotSkin.Black, "Schwarz"), (RobotSkin.Gold, "Gold"), (RobotSkin.Retro, "Retro"), (RobotSkin.Pink, "Pink"), (RobotSkin.Squirrel, "🐿 Eichhörnchen") }, (RobotSkin)s.Skin, v => m.Set(() => s.Skin = (int)v)),
-            hat));
         var ruleText = Text(s.NeverTouch.Count == 0
             ? "Rechtsklick auf eine Datei in „Elemente prüfen“ merkt sie dir als „nie anfassen“."
             : $"{s.NeverTouch.Count} {(s.NeverTouch.Count == 1 ? "Datei rührt" : "Dateien rührt")} RoboDust nie an.");
@@ -494,6 +494,120 @@ public sealed class Panel : Window
         start.Children.Add(Switch("Fenster minimieren, damit ich zuschauen kann", m.ClearWindows, v => { m.ClearWindows = v; m.Changed(); }));
         body.Children.Add(Field("Start", start));
     }
+
+    // MARK: - Shop page
+
+    ShopPreview preview;
+    System.Windows.Threading.DispatcherTimer previewTimer;
+    Image previewImage;
+    readonly System.Diagnostics.Stopwatch previewClock = System.Diagnostics.Stopwatch.StartNew();
+    double previewLast;
+    ShopCategory shopCat = ShopCategory.Skins;
+    ShopItem tryItem;
+
+    void StopPreview() { previewTimer?.Stop(); previewImage = null; }
+
+    /// What the robot would look like: what it wears, with the item being tried on added.
+    Look TryLook => tryItem != null ? tryItem.Wear(Look.Of(model.Settings)) : Look.Of(model.Settings);
+
+    void Redraw() { shape = null; Refresh(); }
+
+    void ShopPage(StackPanel body)
+    {
+        var m = model; var s = m.Settings;
+        body.Children.Add(Btn("Zurück", Kind.Quiet, () => { tryItem = null; m.Page = Page.Main; m.Changed(); }, ""));
+        var coins = new TextBlock { Text = $"● {s.Coins:N0} Münzen", FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Amber), Margin = new Thickness(0, 16, 0, 2) };
+        body.Children.Add(coins);
+        body.Children.Add(Text("Für jede aufgeräumte Datei gibt es eine Münze, und beim Aufräumen liegen Münzen auf dem Desktop: fünf pro Stück."));
+
+        // The fitting room.
+        previewImage = new Image { Width = 332, Height = 203, Stretch = Stretch.UniformToFill };
+        var frame = new Border { CornerRadius = new CornerRadius(10), Margin = new Thickness(0, 12, 0, 10), ClipToBounds = true, Child = previewImage, Background = new SolidColorBrush(Color.FromRgb(30, 32, 42)) };
+        frame.Clip = new RectangleGeometry(new Rect(0, 0, 332, 203), 10, 10);
+        body.Children.Add(frame);
+        StartPreview();
+
+        if (tryItem == null) body.Children.Add(Text("Klick auf ein Teil, um es anzuprobieren.", 13, Primary));
+        else
+        {
+            var owned = Shop.Owns(s, tryItem);
+            var worn = tryItem.Worn(Look.Of(s));
+            body.Children.Add(Text($"{tryItem.Emoji} {tryItem.Name}", 14, Primary, true));
+            var blurb = Text(tryItem.Blurb); blurb.Margin = new Thickness(0, 2, 0, 8); body.Children.Add(blurb);
+            Button action;
+            if (!owned)
+            {
+                if (s.Coins >= tryItem.Price)
+                    action = Btn($"Kaufen und anlegen · ● {tryItem.Price}", Kind.Primary, () => { var it = tryItem; m.Set(() => Shop.Buy(s, it)); Chime(); Redraw(); });
+                else
+                {
+                    action = Btn($"● {tryItem.Price}", Kind.Quiet, () => { });
+                    action.IsEnabled = false;
+                    var miss = Text($"Dir fehlen noch {tryItem.Price - s.Coins} Münzen. Räum auf, dann klappt's.", 12, new SolidColorBrush(Orange));
+                    miss.Margin = new Thickness(0, 0, 0, 6);
+                    body.Children.Add(miss);
+                }
+            }
+            else if (!worn) action = Btn("Anlegen", Kind.Primary, () => { var it = tryItem; m.Set(() => Shop.Wear(s, it)); Redraw(); });
+            else if (tryItem.TakeOff != null) action = Btn("Ablegen", Kind.Quiet, () => { var it = tryItem; m.Set(() => Shop.TakeOff(s, it)); tryItem = null; Redraw(); });
+            else { action = Btn("Angelegt", Kind.Quiet, () => { }); action.IsEnabled = false; }
+            body.Children.Add(action);
+        }
+
+        var cats = Segmented(new List<(ShopCategory, string)> { (ShopCategory.Skins, "Skins"), (ShopCategory.Hats, "Hüte"), (ShopCategory.Tuning, "Tuning"), (ShopCategory.Pets, "Haustiere") },
+            shopCat, v => { shopCat = v; tryItem = null; Redraw(); });
+        ((FrameworkElement)cats).Margin = new Thickness(0, 14, 0, 10);
+        body.Children.Add(cats);
+
+        var grid = new System.Windows.Controls.Primitives.UniformGrid { Columns = 3 };
+        var look = Look.Of(s);
+        foreach (var it in Shop.Items)
+        {
+            if (it.Category != shopCat) continue;
+            var owned = Shop.Owns(s, it);
+            var worn = it.Worn(look);
+            var tile = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            tile.Children.Add(new TextBlock { Text = it.Emoji, FontSize = 26, FontFamily = new FontFamily("Segoe UI Emoji"), Foreground = worn || tryItem == it ? new SolidColorBrush(Accent) : Primary, HorizontalAlignment = HorizontalAlignment.Center });
+            tile.Children.Add(new TextBlock { Text = it.Name, FontSize = 12, Foreground = Primary, HorizontalAlignment = HorizontalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 96 });
+            tile.Children.Add(new TextBlock
+            {
+                Text = worn ? "✓ angelegt" : owned ? "gehört dir" : $"● {it.Price}", FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = worn ? new SolidColorBrush(Accent) : owned ? Secondary : new SolidColorBrush(s.Coins >= it.Price ? Amber : Color.FromRgb(140, 120, 90)),
+            });
+            var selected = tryItem == it;
+            var b = new Button { Content = tile, Height = 84, Margin = new Thickness(3), Cursor = Cursors.Hand };
+            b.Template = Template(new CornerRadius(9),
+                new SolidColorBrush(selected ? Color.FromArgb(46, Accent.R, Accent.G, Accent.B) : Color.FromArgb(18, 255, 255, 255)),
+                selected || worn ? new SolidColorBrush(selected ? Accent : Color.FromArgb(90, Accent.R, Accent.G, Accent.B)) : null,
+                new SolidColorBrush(Color.FromArgb(34, 255, 255, 255)));
+            var item = it;
+            b.Click += (_, _) => { tryItem = item; Redraw(); };
+            grid.Children.Add(b);
+        }
+        body.Children.Add(grid);
+    }
+
+    void StartPreview()
+    {
+        preview ??= new ShopPreview();
+        if (!preview.Ready) { previewImage.Source = null; return; }
+        if (previewTimer == null)
+        {
+            previewTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+            previewTimer.Tick += (_, _) =>
+            {
+                if (previewImage == null) { previewTimer.Stop(); return; }
+                var t = previewClock.Elapsed.TotalSeconds;
+                var dt = (float)Math.Min(0.05, t - previewLast); previewLast = t;
+                previewImage.Source = preview.Render(TryLook, (float)t, dt);
+            };
+        }
+        previewImage.Source = preview.Render(TryLook, (float)previewClock.Elapsed.TotalSeconds, 0.016f);   // straight away, not on the first tick
+        previewTimer.Start();
+    }
+
+    /// A little "kaching" when something is bought. Uses the system sound, so it works without a run.
+    static void Chime() { try { System.Media.SystemSounds.Asterisk.Play(); } catch { } }
 
     // MARK: - Shelf page
 
@@ -838,6 +952,8 @@ public static class PanelShot
         One(f, System.IO.Path.Combine(dir, "panel_result.png"));
         var g = M(); g.Page = Page.Settings; g.Fun = FunMode.Plow; g.Settings.Skin = 2; g.Settings.Hat = true; g.Settings.Schedule = 2; g.Settings.MinAgeDays = 7;
         One(g, System.IO.Path.Combine(dir, "panel_settings.png"));
+        var sh = M(); sh.Page = Page.Shop; sh.Settings.Coins = 420; sh.Settings.HatKind = 2; sh.Settings.Spoiler = true; sh.Settings.Glow = true; sh.Settings.Decal = 2; sh.Settings.Skin = 7; sh.Settings.Pet = 1; sh.Settings.Exhaust = true;
+        One(sh, System.IO.Path.Combine(dir, "panel_shop.png"));
         var h = M(); h.Settings.Stats = new Stats { Runs = 12, Items = 312, Bytes = 14_200_000_000, Meters = 1234, Kinds = new() { ["Bilder"] = 120, ["Dokumente"] = 80 } };
         One(h, System.IO.Path.Combine(dir, "panel_stats.png"));
     }

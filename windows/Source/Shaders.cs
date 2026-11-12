@@ -213,10 +213,10 @@ float groove(float d, float w) { return smoothstep(w, 0.0, abs(d)); }
 
     // ---------- robot ----------
     public const string RobotVS = Head + @"
-uniform vec2 center; uniform float radius; uniform vec2 shake;
+uniform vec2 center; uniform float radius; uniform vec2 shake; uniform float quadScale;
 out vec2 p;
 void main() {
-    vec2 q = kQuad[gl_VertexID] * radius * 1.03;
+    vec2 q = kQuad[gl_VertexID] * radius * quadScale;   // bigger than the shell for a spoiler or underglow
     gl_Position = toClip(center + q + shake); p = q;
 }";
     public const string RobotFS = Head + Lighting + @"
@@ -224,6 +224,89 @@ in vec2 p; out vec4 o;
 uniform float radius; uniform float heading; uniform float lidar; uniform float bumper; uniform float ledPulse;
 uniform vec4 led; uniform float alpha;
 uniform vec3 bodyCol; uniform vec3 plateCol; uniform float bodyGloss; uniform float bodyMetal; uniform float hat; uniform float ears;   // skins
+// Shop: hat kind, shell pattern, spoiler, decal, underglow colour (a > 0 when on), and time for anything that spins.
+uniform int hatKind; uniform int pattern; uniform float spoiler; uniform int decal; uniform vec4 glow; uniform float time;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
+Mat plain(vec3 c, float gloss, float metal) { Mat m; m.albedo = c; m.gloss = gloss; m.metal = metal; m.emis = 0.0; m.emisColor = vec3(0.0); return m; }
+vec2 toWorldDir(vec2 d) { float c = cos(heading), s = sin(heading); return vec2(c*d.x - s*d.y, s*d.x + c*d.y); }
+/// A dome (or cone) normal for something round seen from above: k is how steep its sides are.
+vec3 domeN(vec2 q, float r, float k) { float h = length(q); vec2 d = h > 1e-4 ? q / h : vec2(0.0); return normalize(vec3(toWorldDir(d) * (h / r) * k, 1.0)); }
+
+/// Hats, seen from straight above, sitting on the top plate. Returns true where the hat is.
+bool hats(vec2 l, inout vec3 col) {
+    vec2 hp = l - vec2(-0.08, 0.0);
+    float hr = length(hp), a = atan(hp.y, hp.x);
+    if (hatKind == 1) {          // party hat: a striped cone with a pompom
+        col *= 1.0 - 0.35 * smoothstep(0.38, 0.27, hr) * step(0.27, hr);
+        if (hr >= 0.27) return false;
+        float stripe = step(0.5, fract(a / 6.2831 * 8.0));
+        col = shade(domeN(hp, 0.27, 2.0), plain(mix(vec3(0.95, 0.25, 0.45), vec3(0.25, 0.72, 0.95), stripe), 0.3, 0.0), 1.0);
+        col = mix(col, shade(domeN(hp, 0.085, 0.9), plain(vec3(1.0, 0.92, 0.55), 0.1, 0.0), 1.0), smoothstep(0.085, 0.065, hr));
+        return true;
+    }
+    if (hatKind == 2) {          // crown: a gold band with points and jewels, velvet inside
+        float outer = 0.25 + 0.06 * pow(abs(cos(a * 3.0)), 6.0);
+        col *= 1.0 - 0.3 * smoothstep(outer + 0.1, outer, hr) * step(outer, hr);
+        if (hr >= outer) return false;
+        if (hr < 0.17) { col = shade(domeN(hp, 0.17, 0.6), plain(vec3(0.55, 0.05, 0.12), 0.25, 0.0), 1.0); return true; }
+        col = shade(normalize(vec3(toWorldDir(hp / hr) * 0.6, 1.0)), plain(vec3(1.0, 0.78, 0.25), 0.85, 1.0), 1.0);
+        for (int i = 0; i < 6; i++) {
+            float ga = float(i) * 1.0472 + 0.5236;
+            vec2 gp = hp - vec2(cos(ga), sin(ga)) * 0.21;
+            float g = smoothstep(0.035, 0.025, length(gp));
+            col = mix(col, shade(domeN(gp, 0.035, 1.0), plain(i % 2 == 0 ? vec3(0.85, 0.08, 0.15) : vec3(0.1, 0.35, 0.9), 1.0, 0.0), 1.0), g);
+        }
+        return true;
+    }
+    if (hatKind == 3) {          // top hat: a wide black brim, a tall crown, a red band
+        col *= 1.0 - 0.4 * smoothstep(0.42, 0.31, hr) * step(0.31, hr);
+        if (hr >= 0.31) return false;
+        if (hr > 0.2) col = shade(domeN(hp, 0.31, 0.3), plain(vec3(0.03), 0.6, 0.0), 1.0);
+        else if (hr > 0.18) col = shade(vec3(0.0, 0.0, 1.0), plain(vec3(0.7, 0.05, 0.08), 0.4, 0.0), 1.0);
+        else col = shade(vec3(toWorldDir(hp) * 0.4, 1.0), plain(vec3(0.05), 0.7, 0.0), 1.0);
+        return true;
+    }
+    if (hatKind == 4) {          // cowboy hat: an oval leather brim, curled at the sides, a dented crown
+        vec2 e = hp / vec2(0.30, 0.38);
+        float er = length(e);
+        col *= 1.0 - 0.35 * smoothstep(1.3, 1.0, er) * step(1.0, er);
+        if (er >= 1.0) return false;
+        vec3 leather = vec3(0.55, 0.33, 0.16) * (0.9 + 0.1 * vn(hp * 40.0));
+        col = shade(normalize(vec3(toWorldDir(e) * (er > 0.7 ? 1.2 : 0.2), 1.0)), plain(leather, 0.2, 0.0), 1.0);
+        vec2 c2 = hp / vec2(0.17, 0.21);
+        if (length(c2) < 1.0) {
+            col = shade(domeN(c2, 1.0, 0.7), plain(leather * 0.9, 0.25, 0.0), 1.0);
+            col *= 1.0 - 0.4 * smoothstep(0.08, 0.0, abs(c2.y)) * step(-0.6, c2.x) * step(c2.x, 0.6);   // the dent
+        }
+        if (abs(length(c2) - 1.0) < 0.08) col = vec3(0.12, 0.07, 0.04);
+        return true;
+    }
+    if (hatKind == 5) {          // Santa hat: red, a white fur rim, a pompom flopped to one side
+        col *= 1.0 - 0.35 * smoothstep(0.39, 0.28, hr) * step(0.28, hr);
+        vec2 pp = hp - vec2(-0.12, 0.14);
+        float pr = length(pp);
+        if (pr < 0.08) { col = shade(domeN(pp, 0.08, 0.9), plain(vec3(0.97), 0.05, 0.0), 1.0); return true; }
+        if (hr >= 0.28) return false;
+        if (hr > 0.22) col = shade(domeN(hp, 0.28, 0.6), plain(vec3(0.96) * (0.9 + 0.1 * vn(hp * 60.0)), 0.05, 0.0), 1.0);
+        else col = shade(domeN(hp - vec2(-0.06, 0.07), 0.22, 1.6), plain(vec3(0.82, 0.08, 0.1), 0.3, 0.0), 1.0);
+        return true;
+    }
+    if (hatKind == 6) {          // propeller cap: four coloured panels, a button, and a spinning propeller
+        col *= 1.0 - 0.3 * smoothstep(0.34, 0.25, hr) * step(0.25, hr);
+        vec2 r = vec2(cos(time * 14.0) * hp.x + sin(time * 14.0) * hp.y, -sin(time * 14.0) * hp.x + cos(time * 14.0) * hp.y);
+        float blade = smoothstep(0.03, 0.02, abs(r.y)) * step(abs(r.x), 0.36);
+        if (hr < 0.25) {
+            int q = int(floor(mod(a / 1.5708 + 4.0, 4.0)));
+            vec3 pc = q == 0 ? vec3(0.9, 0.15, 0.15) : q == 1 ? vec3(0.98, 0.8, 0.1) : q == 2 ? vec3(0.15, 0.4, 0.9) : vec3(0.15, 0.7, 0.3);
+            col = shade(domeN(hp, 0.25, 0.9), plain(pc, 0.4, 0.0), 1.0);
+        }
+        col = mix(col, vec3(0.75, 0.78, 0.8), blade * 0.75);
+        if (hr < 0.04) col = shade(domeN(hp, 0.04, 1.0), plain(vec3(0.95, 0.85, 0.2), 0.8, 0.6), 1.0);
+        return hr < 0.25 || blade > 0.0;
+    }
+    return false;
+}
 uniform sampler2D logo;
 
 float robotHeight(vec2 l, out int mat, out float ao) {
@@ -286,9 +369,30 @@ void main() {
     float rr = length(wp);
     float px = fwidth(p.x) / radius;
     float edge = smoothstep(1.0, 1.0 - px * 1.5, rr);
-    if (edge <= 0.0) discard;
     float c = cos(-heading), s = sin(-heading);
     vec2 l = vec2(c*wp.x - s*wp.y, s*wp.x + c*wp.y);
+    if (edge <= 0.0) {
+        // Outside the shell: only a spoiler, or the glow of a neon underglow.
+        if (spoiler > 0.5) {
+            float wing = sdBox(l - vec2(-1.13, 0.0), vec2(0.075, 0.8), 0.05);
+            float strut = min(sdBox(vec2(l.x + 1.03, abs(l.y) - 0.45), vec2(0.06, 0.035), 0.01), 1.0);
+            float d = min(wing, strut);
+            if (d < 0.0) {
+                float wa = smoothstep(0.0, -px * 1.5, d);
+                vec3 n = normalize(vec3(toWorldDir(vec2(-(l.x + 1.13) * 6.0, 0.0)), 1.0));
+                vec3 wc = shade(n, plain(mix(vec3(0.75, 0.06, 0.08), vec3(0.08), step(strut, wing)), 0.7, 0.0), 1.0);
+                wc = mix(wc, vec3(0.95), smoothstep(0.012, 0.0, abs(l.x + 1.075)) * step(wing, 0.0) * 0.6);   // a highlight along the lip
+                o = vec4(wc * wa * alpha, wa * alpha);
+                return;
+            }
+        }
+        if (glow.a > 0.5) {
+            float g = exp(-pow(max(rr - 0.97, 0.0) / 0.13, 2.0)) * (0.75 + 0.25 * sin(time * 3.0));
+            o = vec4(glow.rgb * g * alpha * 0.9, 0.0);   // adds light, covers nothing
+            return;
+        }
+        discard;
+    }
 
     int mat; float ao; int mm; float aa;
     const float E = .0035;
@@ -309,6 +413,33 @@ void main() {
     else if (mat == 5) { m.albedo = vec3(.72, .73, .75); m.gloss = .5; m.metal = .6; } // buttons
     else if (mat == 6) { m.albedo = vec3(.62, .62, .62); m.gloss = .16; }             // turret skirt
     else if (mat == 7) { m.albedo = vec3(.015, .016, .02); m.gloss = 1.0; }           // turret dome
+    float rl = length(l);
+    if (mat == 0 || mat == 1) {
+        // Shop patterns on the shell.
+        if (pattern == 1) {        // carbon fibre weave
+            float w = step(0.5, fract((l.x + l.y) * 16.0)) == step(0.5, fract((l.x - l.y) * 16.0)) ? 0.07 : 0.12;
+            m.albedo = vec3(w); m.gloss = 0.8;
+        } else if (pattern == 2) { // camouflage
+            float n = vn(l * 4.0 + 3.1) + 0.5 * vn(l * 9.0);
+            m.albedo = n < 0.6 ? vec3(0.27, 0.32, 0.18) : n < 0.9 ? vec3(0.42, 0.37, 0.22) : vec3(0.15, 0.17, 0.11); m.gloss = 0.1;
+        } else if (pattern == 3) { // galaxy: deep space, a nebula and stars
+            float n = vn(l * 3.0 + 7.0) * 0.6 + vn(l * 7.0) * 0.4;
+            m.albedo = mix(vec3(0.04, 0.03, 0.12), vec3(0.45, 0.12, 0.55), n * n);
+            vec2 sc = floor(l * 40.0);
+            float star = step(0.985, h21(sc)) * smoothstep(0.3, 0.0, length(fract(l * 40.0) - 0.5));
+            m.emis = star * 1.5; m.emisColor = vec3(1.0); m.gloss = 0.7;
+        } else if (pattern == 4) { // neon: black with a glowing rim
+            m.albedo = vec3(0.03); m.gloss = 0.6;
+            m.emis = smoothstep(0.88, 0.97, rl) * (0.8 + 0.2 * sin(time * 4.0)); m.emisColor = vec3(0.1, 1.0, 0.85);
+        }
+        // Decals over the paint.
+        if (decal == 1 && abs(abs(l.y) - 0.11) < 0.04) m.albedo = vec3(0.95, 0.95, 0.97);               // racing stripes
+        if (decal == 2) {                                                                              // flames, licking back from the bumper
+            float tongue = l.x + 0.12 * sin(abs(l.y) * 20.0) + 0.05 * sin(abs(l.y) * 47.0);
+            float f = smoothstep(0.02, 0.06, tongue);
+            m.albedo = mix(m.albedo, mix(vec3(0.95, 0.2, 0.05), vec3(1.0, 0.85, 0.2), smoothstep(0.1, 0.8, l.x)), f);
+        }
+    }
 
     // Spinning laser head, seen through the smoked dome.
     vec2 tp = l - vec2(.27, 0.0);
@@ -336,26 +467,7 @@ void main() {
     }
 
     vec3 col = shade(N, m, ao) + extra;
-    // A party hat, seen from straight above: a striped cone with a pompom on top.
-    if (hat > 0.5) {
-        vec2 hp = l - vec2(-0.08, 0.0);
-        float hr = length(hp);
-        col *= 1.0 - 0.35 * smoothstep(0.38, 0.27, hr) * step(0.27, hr);   // its shadow on the plate
-        if (hr < 0.27) {
-            vec2 dl = hp / max(hr, 1e-3);
-            float cw2 = cos(heading), sw2 = sin(heading);
-            vec2 dw = vec2(cw2*dl.x - sw2*dl.y, sw2*dl.x + cw2*dl.y);
-            float stripe = step(0.5, fract(atan(hp.y, hp.x) / 6.2831 * 8.0));
-            Mat hm; hm.albedo = mix(vec3(0.95, 0.25, 0.45), vec3(0.25, 0.72, 0.95), stripe); hm.gloss = 0.3; hm.metal = 0.0; hm.emis = 0.0; hm.emisColor = vec3(0.0);
-            col = shade(normalize(vec3(dw * 0.9, 0.45)), hm, 1.0);
-            float pom = smoothstep(0.085, 0.065, hr);
-            if (pom > 0.0) {
-                Mat pm; pm.albedo = vec3(1.0, 0.92, 0.55); pm.gloss = 0.1; pm.metal = 0.0; pm.emis = 0.0; pm.emisColor = vec3(0.0);
-                vec3 np = normalize(vec3(dw * (hr / 0.085) * 0.9, 1.0));
-                col = mix(col, shade(np, pm, 1.0), pom);
-            }
-        }
-    }
+    hats(l, col);
     // The squirrel look: two pointed ears with dark tufts, at the front of the shell.
     if (ears > 0.5) {
         for (int k = -1; k <= 1; k += 2) {

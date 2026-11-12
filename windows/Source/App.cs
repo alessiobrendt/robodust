@@ -104,6 +104,14 @@ public sealed class AppController
 
     public void ShowPanel() { Panel.Show(); Panel.Activate(); }
 
+    /// Coins were given from the command line while RoboDust was running: read them in.
+    public void ReloadCoins()
+    {
+        var fresh = Settings.Load();
+        Model.Settings.Coins = fresh.Coins;
+        Model.Changed();
+    }
+
     /// The schedule fired while RoboDust was already running in the tray.
     public void StartScheduled()
     {
@@ -238,7 +246,8 @@ public sealed class AppController
             for (int i = 0; i < sprites.Count; i++) s.Items[i].Color = sprites[i].Average;
             s.Mode = m.Mode;
             s.Fun = m.Fun;
-            s.Skin = (RobotSkin)m.Settings.Skin;
+            s.Look = Look.Of(m.Settings);
+            s.Skin = s.Look.Skin;
             s.RemoteControl = m.Settings.RemoteControl;
             // The cat: one of six characters, if the user has said they have one.
             if (m.Settings.HasCat)
@@ -275,7 +284,7 @@ public sealed class AppController
                 using (var wall = SafeWallpaper(screen)) o.Renderer.SetWallpaper(wall);
                 o.Renderer.SetSprites(sprites);
                 o.Renderer.LidarRadius = MathF.Max(plan.Bounds.W, plan.Bounds.H) * 0.85f;
-                o.Renderer.Skin = (RobotSkin)m.Settings.Skin; o.Renderer.Hat = m.Settings.Hat;
+                o.Renderer.Skin = (RobotSkin)m.Settings.Skin; o.Renderer.Hat = m.Settings.Hat; o.Renderer.Look = Look.Of(m.Settings);
                 o.Sim = s;
                 o.OnEscape = () => { if (!m.Applying) StopAndRestore(); };
                 o.OnSpace = () => m.TogglePause();
@@ -608,6 +617,13 @@ public sealed class AppController
         uiTimer?.Stop(); uiTimer = null;
         CompositionTarget.Rendering -= OnFrame;
         synth.SetMotor(0, 0); synth.SetRoar(0); synth.Cat.SetPurr(0);
+        // Coins earned this run go to the shop, even if it was stopped early.
+        if (sim != null && TestRoot == null && sim.CoinsEarned > 0)
+        {
+            Model.Settings.Coins += sim.CoinsEarned;
+            Model.Settings.Save();
+            Model.Note = $"+{sim.CoinsEarned} Münzen für den Shop";
+        }
         synth.StopLive();
 
         foreach (var o in overlays) { o.Sim = null; o.Hide(); o.Dispose(); }
