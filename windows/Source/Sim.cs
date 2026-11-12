@@ -252,7 +252,7 @@ public sealed partial class Sim
         if (Phase is Phase.Emptying or Phase.Done) Battery = MathF.Min(1, Battery + dt * 0.01f);
     }
 
-    public bool SuctionOn => !Plowing && (Phase is Phase.Cleaning or Phase.Hunting || (Phase == Phase.Returning && !finishing && Remaining > 0));
+    public bool SuctionOn => !Plowing && Me is not { Exploded: true } && (Phase is Phase.Cleaning or Phase.Hunting || (Phase == Phase.Returning && !finishing && Remaining > 0));
 
     // MARK: - Phases
 

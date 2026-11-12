@@ -59,7 +59,7 @@ public sealed partial class Sim
         foreach (var (f, x, h) in new[] { (Me, a.W * 0.2f, 0f), (Foe, a.W * 0.8f, MathF.PI) })
         {
             f.Pos = new V2(x, a.H * 0.5f); f.Heading = h; f.V = 0; f.W = 0; f.Knock = V2.Zero;
-            f.Hp = 1; f.Down = false; f.KoT = 0; f.Stun = 0; f.Air = 0; f.Strike = -1; f.Swing = 0; f.Cool = 0.5f; f.Alpha = 1; f.Grace = 0;
+            f.Hp = 1; f.Down = false; f.KoT = 0; f.Stun = 0; f.Air = 0; f.Strike = -1; f.Swing = 0; f.Cool = 0.5f; f.Alpha = 1; f.Grace = 0; f.Exploded = false;
         }
         Pos = Me.Pos; Heading = Me.Heading; V = 0;
         a.Phase = ArenaPhase.Countdown; a.PhaseT = 0;
@@ -84,9 +84,10 @@ public sealed partial class Sim
             f.LedPulse += dt; f.LidarAngle += 14 * dt;
             f.BrushSpeed += ((f.Down ? 0 : 26) - f.BrushSpeed) * MathF.Min(1, dt * 3);
             f.BrushAngle += f.BrushSpeed * dt;
-            if (f.Down && Rand() < dt * 20) SpawnFun(PartKind.Smoke, f.Pos + new V2(Rand(-f.R * 0.5f, f.R * 0.5f), Rand(-f.R * 0.5f, f.R * 0.5f)), new V2(Rand(-20, 20), Rand(-70, -25)), Rand(1.2f, 2), Rand(14, 22), 0.22f, 0.22f, 0.24f, 0.75f);
+            if (f.Down && !a.Host) f.KoT += dt;
+            if (f.Down && !f.Exploded) Critical(f, dt);
         }
-        Pos = Me.Pos; Heading = Me.Heading; V = Me.V;
+        Pos = Me.Pos; Heading = Me.Heading; V = Me.V; RobotAlpha = Me.Alpha;
         BrushAngle = Me.BrushAngle; BrushSpeed = Me.BrushSpeed; LidarAngle = Me.LidarAngle; LedPulse = Me.LedPulse;
         Led = Me.Down ? new V3(1, 0.12f, 0.1f) : Me.Led;
         UpdateParticles(dt);
@@ -103,6 +104,7 @@ public sealed partial class Sim
         DriveFighter(Me, fighting ? a.ThA : 0, fighting ? a.StA : 0, fighting && a.BoA, ref a.BoostCdA, ref a.BoostTA, dt);
         DriveFighter(Foe, fighting ? a.ThB : 0, fighting ? a.StB : 0, fighting && a.BoB, ref a.BoostCdB, ref a.BoostTB, dt);
         Tick(Me, dt, true); Tick(Foe, dt, true);
+        foreach (var f in new[] { Me, Foe }) if (f.Down && !f.Exploded && f.KoT > FuseTime) Explode(f);
         switch (a.Phase)
         {
             case ArenaPhase.Countdown:
@@ -126,7 +128,7 @@ public sealed partial class Sim
                 }
                 break;
             case ArenaPhase.RoundOver:
-                if (a.PhaseT >= 3)
+                if (a.PhaseT >= 4)
                 {
                     if (a.Winner >= 0) { a.Phase = ArenaPhase.MatchOver; a.PhaseT = 0; }
                     else { a.Round++; ResetRound(); Banner("3"); }
@@ -195,7 +197,7 @@ public sealed partial class Sim
     {
         x = MathF.Round(f.Pos.X, 1), y = MathF.Round(f.Pos.Y, 1), h = MathF.Round(f.Heading, 3), v = MathF.Round(f.V), w = MathF.Round(f.W, 2),
         hp = MathF.Round(f.Hp, 3), sp = MathF.Round(f.Spin % 6.2832f, 2), sw = MathF.Round(f.Swing, 2), air = MathF.Round(f.Air, 2), st = MathF.Round(f.Stun, 2),
-        dn = f.Down, fl = MathF.Round(f.Flash, 2),
+        dn = f.Down, ex = f.Exploded, al = MathF.Round(f.Alpha, 2), fl = MathF.Round(f.Flash, 2),
     };
 
     /// The host's picture of the fight, ~30 times a second.
@@ -233,7 +235,8 @@ public sealed partial class Sim
                     case 3: Audio?.Thud(M.Clamp(F(3), 0, 1)); break;
                     case 4: DustLocal(at, 50, 8); break;
                     case 5: Audio?.Chirp((880, 0.25f)); break;
-                    case 6: SparksLocal(at, 30, 520); Audio?.Popper(); Audio?.Thud(0.9f); break;
+                    case 6: SparksLocal(at, 18, 480); Audio?.Thud(0.7f); break;
+                    case 7: ExplosionFx(at, R, (RobotSkin)(int)M.Clamp(F(3), 0, 18)); break;
                 }
             }
         }
@@ -264,6 +267,7 @@ public sealed partial class Sim
         var down = Lan.Bool(o, "dn");
         if (down && !f.Down) f.KoT = 0;
         f.Down = down;
+        f.Exploded = Lan.Bool(o, "ex"); f.Alpha = Lan.Num(o, "al", 0, 1, 1);
         f.Flash *= MathF.Exp(-dt * 6);
     }
 

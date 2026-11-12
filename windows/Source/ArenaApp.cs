@@ -300,6 +300,7 @@ public sealed partial class AppController
         if (ArenaAuto != null)
         {
             Console.WriteLine($"ARENA {ArenaAuto}: {message} rounds {s.Arena.RoundsA}:{s.Arena.RoundsB} round {s.Arena.Round} me {s.Me.Name} hp {s.Me.Hp:0.00} foe {s.Foe.Name} hp {s.Foe.Hp:0.00}");
+            ArenaAuto = "done";   // one fight, then quit
             Delay(1.5, () => Quit());
         }
         CloseArena();

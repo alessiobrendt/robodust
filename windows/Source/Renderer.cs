@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -411,7 +411,7 @@ public sealed unsafe class Renderer
     {
         var a = sim.Arena;
         // Names over the health bars: yours in cyan, theirs in red.
-        if (sim.Me is { } me) DrawText(me.Name, sim.Pos + new V2(0, -(sim.R * 1.28f + 28)), 16, 1, Color.FromArgb(150, 230, 255));
+        if (sim.Me is { } me) DrawText(me.Name, sim.Pos + new V2(0, -(sim.R * 1.28f + 28)), 16, sim.RobotAlpha, Color.FromArgb(150, 230, 255));
         if (sim.Foe is { } foe) DrawText(foe.Name, foe.Pos + new V2(0, -(foe.R * 1.28f + 28)), 16, foe.Alpha, Color.FromArgb(255, 150, 140));
         // The score, just above the arena.
         DrawText($"{a.NameA}   {a.RoundsA} : {a.RoundsB}   {a.NameB}", new V2(a.W / 2, -24), 22, 1, Color.White);
@@ -631,7 +631,7 @@ public sealed unsafe class Renderer
             {
                 Pos = f.Pos, Heading = f.Heading, R = f.R * fs, Scale = fs, Alpha = alpha * M.Clamp(f.Alpha, 0, 1), Height = f.LiftK * 0.9f,
                 BrushL = fl, BrushR = fr, BrushAngle = f.BrushAngle, BrushSpeed = f.BrushSpeed, Lidar = f.LidarAngle, LedPulse = f.LedPulse, Bumper = f.Flash,
-                Led = f.Down ? new V3(1, 0.12f, 0.1f) : f.Led, Skin = f.Look.Skin, Look = f.Look, Spin = f.Spin, Swing = f.Swing,
+                Led = f.Down ? (((int)(f.KoT * 9)) % 2 == 0 ? new V3(1, 0.12f, 0.1f) : new V3(0.15f, 0.02f, 0.02f)) : f.Led, Skin = f.Look.Skin, Look = f.Look, Spin = f.Spin, Swing = f.Swing,
             });
         }
         // The snowplow's blade sits in front, under the bumper.
@@ -649,7 +649,7 @@ public sealed unsafe class Renderer
         {
             Pos = sim.Pos, Heading = sim.Heading, R = sim.R * scale, Scale = scale, Alpha = alpha, Height = (1 - bounce) + liftK * 0.9f, Shake = shakeP,
             BrushL = l, BrushR = r, BrushAngle = sim.BrushAngle, BrushSpeed = sim.BrushSpeed, Lidar = sim.LidarAngle, Bumper = sim.Bumper, LedPulse = sim.LedPulse,
-            Led = sim.Me is { Down: true } ? new V3(1, 0.12f, 0.1f) : sim.Led, Skin = Look.Skin, Hat = Look.Hat == 1, Look = sim.Me?.Look ?? Look,
+            Led = sim.Me is { Down: true } dm ? (((int)(dm.KoT * 9)) % 2 == 0 ? new V3(1, 0.12f, 0.1f) : new V3(0.15f, 0.02f, 0.02f)) : sim.Led, Skin = Look.Skin, Hat = Look.Hat == 1, Look = sim.Me?.Look ?? Look,
             // Saw and spinner turn with the brushes; in the shop the hammer and flipper show what they do.
             Spin = sim.Me?.Spin ?? sim.BrushAngle * 1.1f,
             Swing = sim.Me?.Swing ?? (sim.Showcase ? MathF.Pow(MathF.Max(0, MathF.Sin(sim.T * 2.2f)), 3) : 0),

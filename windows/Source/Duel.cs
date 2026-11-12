@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 
 namespace RoboDust;
@@ -13,7 +13,7 @@ public sealed class Fighter
     public Look Look;
     public V3 Led;
     public float Hp = 1, Stun, Air, Spin, Swing, Strike = -1, Cool, BumpCool, Alpha = 1, KoT, Recoil, Flash, Grace;
-    public bool Down, Leaving;
+    public bool Down, Leaving, Exploded;
     public int Wins;
     public float BrushAngle, BrushSpeed, LidarAngle, LedPulse;
     public const float AirTime = 0.8f;
@@ -64,15 +64,15 @@ public sealed partial class Sim
         if (Foe == null) { if (active) { foeDelay -= dt; if (foeDelay <= 0) SpawnFoe(); } }
         else UpdateFoe(Foe, dt, active);
 
-        // RoboDust knocked out: smokes, spins and patches itself up.
+        // RoboDust knocked out: sputters, blows up, and a fresh one drops in where it stood.
         if (me.Down)
         {
             me.KoT += dt;
-            if (Rand() < dt * 18) SpawnFun(PartKind.Smoke, Pos + new V2(Rand(-R * 0.5f, R * 0.5f), Rand(-R * 0.5f, R * 0.5f)), new V2(Rand(-20, 20), Rand(-60, -20)), Rand(1, 1.8f), Rand(12, 20), 0.3f, 0.3f, 0.32f, 0.7f);
-            if (Rand() < dt * 10) Sparks(Pos + Fwd.Rotated(Rand(-3, 3)) * R * 0.8f, 4, 200);
-            if (me.KoT > 3.2f)
+            if (!me.Exploded) { Critical(me, dt); if (me.KoT > FuseTime) { Explode(me); RobotAlpha = 0; } }
+            else if (me.KoT > FuseTime + 2.2f)
             {
-                me.Down = false; me.Hp = 1; me.KoT = 0; me.Grace = 4;
+                me.Down = false; me.Exploded = false; me.Alpha = 1; RobotAlpha = 1;
+                me.Hp = 1; me.KoT = 0; me.Grace = 4; me.Air = Fighter.AirTime;
                 Audio?.Chirp((523, 0.07f), (659, 0.07f), (784, 0.12f));
             }
         }
@@ -110,7 +110,7 @@ public sealed partial class Sim
     bool DuelHold(float dt)
     {
         if (Fun != FunMode.Duel || Me == null) return false;
-        if (Me.Down) { DriveRaw(0, 2.4f, dt); Status = "Wird repariert …"; return true; }
+        if (Me.Down) { DriveRaw(0, Me.Exploded ? 0 : 2.4f, dt); Status = Me.Exploded ? "Ein neuer RoboDust kommt …" : "Kritischer Schaden!"; return true; }
         if (Me.Stun > 0 || Me.Air > 0) { DriveRaw(0, 0, dt); Status = "Benommen!"; return true; }
         if (engageT > 0 && Foe is { Down: false } f && !ManualActive)
         {
@@ -156,17 +156,16 @@ public sealed partial class Sim
         var wasUp = f.Air > 0;
         Tick(f, dt, !f.Down);
         if (wasUp && f.Air <= 0) { Dust(f.Pos, f.R, 22); Audio?.Thud(0.35f); }
-        f.Alpha = MathF.Min(f.Down || !active ? f.Alpha : 1, f.Alpha + dt * 3);
+        f.Alpha = MathF.Min(f.Down || f.Leaving || !active ? f.Alpha : 1, f.Alpha + dt * 3);
 
         if (f.Down)
         {
-            // Knocked out: spins to a stop in a cloud of smoke, then it's towed off (fades).
+            // Knocked out: spins, sputters, and blows up. Then the next challenger can come.
             f.KoT += dt;
             f.Heading += dt * MathF.Max(0, 6 - f.KoT * 3);
             f.V *= MathF.Exp(-dt * 3);
-            if (Rand() < dt * 22) SpawnFun(PartKind.Smoke, f.Pos + new V2(Rand(-f.R * 0.5f, f.R * 0.5f), Rand(-f.R * 0.5f, f.R * 0.5f)), new V2(Rand(-20, 20), Rand(-70, -25)), Rand(1.2f, 2), Rand(14, 22), 0.22f, 0.22f, 0.24f, 0.75f);
-            if (f.KoT > 2.4f) f.Alpha -= dt * 1.2f;
-            if (f.Alpha <= 0) { Foe = null; foeIndex++; foeDelay = Rand(3, 6); return; }
+            if (!f.Exploded) { Critical(f, dt); if (f.KoT > FuseTime) Explode(f); }
+            else if (f.KoT > FuseTime + 2.8f) { Foe = null; foeIndex++; foeDelay = Rand(3, 6); return; }
         }
         else if (!active || f.Leaving)
         {
@@ -334,14 +333,10 @@ public sealed partial class Sim
         if (to.Hp > 0) return;
         Event(6, to.Pos.X, to.Pos.Y, 0);
         // K.o.
-        to.Hp = 0; to.Down = true; to.KoT = 0; to.Stun = 0;
-        Sparks(to.Pos, 30, 520);
-        for (int i = 0; i < 26; i++)
-        {
-            var a = Rand(0, 6.283f);
-            SpawnFun(PartKind.Fire, to.Pos + new V2(MathF.Cos(a), MathF.Sin(a)) * Rand(0, to.R * 0.6f), new V2(MathF.Cos(a), MathF.Sin(a)) * Rand(60, 260), Rand(0.3f, 0.6f), Rand(8, 14), 1, 0.7f, 0.3f, 1);
-        }
-        Audio?.Popper(); Audio?.Thud(0.9f);
+        // K.o.: a shower of sparks now; a moment later, while it sputters, it blows up (see Explode).
+        to.Hp = 0; to.Down = true; to.KoT = 0; to.Stun = 0; to.Exploded = false;
+        Sparks(to.Pos, 18, 480);
+        Audio?.Thud(0.7f);
         if (to == Me)
         {
             DuelLosses++;
@@ -355,6 +350,75 @@ public sealed partial class Sim
             Audio?.Chirp((523, 0.08f), (659, 0.08f), (784, 0.08f), (1047, 0.3f));
         }
     }
+
+    // MARK: Going up in flames
+
+    /// How long a beaten robot sputters before it blows up.
+    public const float FuseTime = 1.3f;
+
+    /// Beaten, about to blow: sparks, little flames and smoke from the shell. Each side draws this
+    /// for itself, so nothing here goes over the network.
+    void Critical(Fighter f, float dt)
+    {
+        var k = M.Clamp(f.KoT / FuseTime, 0, 1);
+        if (Rand() < dt * (14 + 30 * k)) SparksLocal(f.Pos + new V2(Rand(-f.R, f.R), Rand(-f.R, f.R)) * 0.7f, 3, 260);
+        if (Rand() < dt * (20 + 50 * k))
+        {
+            var p = f.Pos + new V2(Rand(-f.R, f.R), Rand(-f.R, f.R)) * 0.55f;
+            SpawnFun(PartKind.Fire, p, new V2(Rand(-30, 30), Rand(-90, -30)), Rand(0.35f, 0.6f), Rand(9, 15), 1, 0.7f, 0.3f, 1);
+        }
+        if (Rand() < dt * 16) SpawnFun(PartKind.Smoke, f.Pos + new V2(Rand(-f.R * 0.5f, f.R * 0.5f), Rand(-f.R * 0.5f, f.R * 0.5f)), new V2(Rand(-20, 20), Rand(-70, -25)), Rand(1.2f, 2), Rand(14, 22), 0.2f, 0.2f, 0.22f, 0.75f);
+    }
+
+    /// Boom. The robot is gone; what's left is fire, smoke, flying bits of shell and a scorch mark.
+    void Explode(Fighter f)
+    {
+        if (f.Exploded) return;
+        f.Exploded = true; f.Alpha = 0; f.V = 0; f.Knock = V2.Zero;
+        Event(7, f.Pos.X, f.Pos.Y, (int)f.Look.Skin);
+        ExplosionFx(f.Pos, f.R, f.Look.Skin);
+    }
+
+    void ExplosionFx(V2 at, float r, RobotSkin skin)
+    {
+        V2 Dir(out float a) { a = Rand(0, 6.283f); return new V2(MathF.Cos(a), MathF.Sin(a)); }
+        // A scorch mark on the floor, under everything else, that fades slowly.
+        for (int i = 0; i < 9; i++) SpawnFun(PartKind.Ribbon, at + Dir(out _) * Rand(0, r * 0.7f), V2.Zero, Rand(7, 10), Rand(26, 42), 0.06f, 0.05f, 0.05f, 0.5f);
+        // The flash: a white-hot core, then a fireball rolling outwards.
+        for (int i = 0; i < 10; i++) SpawnFun(PartKind.Fire, at + Dir(out _) * Rand(0, r * 0.3f), Dir(out _) * Rand(20, 80), Rand(0.25f, 0.4f), Rand(28, 40), 1, 0.95f, 0.8f, 1);
+        for (int i = 0; i < 70; i++) SpawnFun(PartKind.Fire, at + Dir(out _) * Rand(0, r * 0.5f), Dir(out _) * Rand(120, 620), Rand(0.45f, 0.95f), Rand(12, 24), 1, 0.7f, 0.3f, 1);
+        // The shockwave: a ring of light racing out.
+        for (int i = 0; i < 48; i++) { var d = new V2(MathF.Cos(i * 0.1309f), MathF.Sin(i * 0.1309f)); SpawnFun(PartKind.Glow, at + d * r * 0.4f, d * 1100, 0.28f, 3.2f, 1, 0.85f, 0.55f, 1); }
+        // Sparks everywhere.
+        SparksLocal(at, 60, 900);
+        // Bits of shell, top plate and metal: they land and lie there until RoboDust vacuums them up.
+        var body = DebrisColor(skin);
+        for (int i = 0; i < 46; i++)
+        {
+            var pick = Rand();
+            var c = pick < 0.55f ? body : pick < 0.8f ? new V3(0.08f, 0.08f, 0.09f) : new V3(0.62f, 0.64f, 0.68f);
+            SpawnFun(PartKind.Ash, at + Dir(out _) * Rand(0, r * 0.6f), Dir(out _) * Rand(220, 640), Rand(8, 12), Rand(4.5f, 9.5f), c.X, c.Y, c.Z, 1, chip: 1.2f);
+        }
+        // Thick smoke rising from where it stood.
+        for (int i = 0; i < 26; i++) SpawnFun(PartKind.Smoke, at + Dir(out _) * Rand(0, r * 0.6f), Dir(out _) * Rand(40, 200) + new V2(0, -40), Rand(2, 3.6f), Rand(24, 40), 0.16f, 0.15f, 0.15f, 0.85f);
+        Shake = MathF.Max(Shake, 1.2f);
+        Audio?.Popper(); Audio?.Thud(1); Audio?.Flame(1.1f); Audio?.Chirp((70, 0.5f));
+    }
+
+    /// Roughly the colour of the shell, for the debris.
+    static V3 DebrisColor(RobotSkin s) => s switch
+    {
+        RobotSkin.Black or RobotSkin.Carbon or RobotSkin.Neon or RobotSkin.Lava => new V3(0.12f, 0.12f, 0.13f),
+        RobotSkin.Galaxy => new V3(0.12f, 0.08f, 0.24f),
+        RobotSkin.Gold => new V3(0.95f, 0.74f, 0.32f),
+        RobotSkin.Pink => new V3(0.97f, 0.62f, 0.76f),
+        RobotSkin.Camo => new V3(0.3f, 0.34f, 0.2f),
+        RobotSkin.Squirrel or RobotSkin.Wood or RobotSkin.Leopard => new V3(0.62f, 0.36f, 0.16f),
+        RobotSkin.Police => new V3(0.18f, 0.24f, 0.55f),
+        RobotSkin.Retro => new V3(0.86f, 0.8f, 0.66f),
+        RobotSkin.Ice => new V3(0.75f, 0.88f, 0.98f),
+        _ => new V3(0.9f, 0.9f, 0.88f),
+    };
 
     /// Robots don't drive through each other: the challenger gives way more than RoboDust does.
     void Separate(Fighter f)
