@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Windows.Forms;
 
@@ -141,7 +141,7 @@ public sealed class Overlay : Form
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
-        if (Sim == null || e.Button != MouseButtons.Left) return;
+        if (Sim == null || Sim.Arena != null || e.Button != MouseButtons.Left) return;
         var p = Pointer();
         if (Sim.Cat is { } c && c.Hit(p, Sim)) { c.Pick(Sim); Capture = true; return; }
         if (Sim.HitRobot(p)) { Sim.PickUp(); Capture = true; return; }

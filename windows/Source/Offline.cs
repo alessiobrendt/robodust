@@ -93,6 +93,56 @@ public static unsafe class Offline
         Gl.wglDeleteContext(ctx);
     }
 
+    /// A practice fight in the arena, both robots driven by the computer, drawn the way the arena
+    /// overlay draws it: the arena in the middle of a 1536x912 display.
+    public static void ArenaDump(float[] times, string outDir, string lookA, string lookB)
+    {
+        Directory.CreateDirectory(outDir);
+        var size = new V2(1536, 912);
+        using var host = new Form { ShowInTaskbar = false, FormBorderStyle = FormBorderStyle.None, Size = new System.Drawing.Size(64, 64) };
+        host.CreateControl();
+        var (dc, ctx) = Gl.CreateContext(host.Handle);
+        const float aw = 1200, ah = 700;
+        var off = new V2((size.X - aw) / 2, (size.Y - ah) / 2 + 20);
+        var r = new Renderer(size, -off);
+        using (var wall = Wallpaper.Fallback((int)size.X, (int)size.Y)) r.SetWallpaper(wall);
+        r.SetSprites(new List<Sprite>());
+        Look Parse(string s) { var l = new Look(); foreach (var part in (s ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)) { var kv = part.Split('='); int.TryParse(kv.Length > 1 ? kv[1] : "1", out var v); switch (kv[0]) { case "skin": l.Skin = (RobotSkin)v; break; case "hat": l.Hat = v; break; case "weapon": l.Weapon = v; break; case "armor": l.Armor = true; break; case "spikes": l.Spikes = true; break; } } return l; }
+        var info = new ArenaInfo { Host = true, Practice = true, CpuA = true, NameA = "Alessio", NameB = "Trainingsbot" };
+        var a = Parse(lookA); var b = Parse(lookB);
+        var s = Sim.MakeArena(aw, ah, info, a, b, new V3(0.2f, 0.85f, 1), new V3(1, 0.3f, 0.25f));
+        r.Look = a; r.Skin = a.Skin;
+        int W = (int)size.X, H = (int)size.Y;
+        var tex = Gl.Gen(Gl.GenTextures);
+        Gl.BindTexture(Gl.TEXTURE_2D, tex);
+        Gl.TexImage2D(Gl.TEXTURE_2D, 0, (int)Gl.RGBA8, W, H, 0, Gl.RGBA, Gl.UNSIGNED_BYTE, null);
+        var fbo = Gl.Gen(Gl.GenFramebuffers);
+        Gl.BindFramebuffer(Gl.FRAMEBUFFER, fbo);
+        Gl.FramebufferTexture2D(Gl.FRAMEBUFFER, Gl.COLOR_ATTACHMENT0, Gl.TEXTURE_2D, tex, 0);
+        const float dt = 1f / 60;
+        var pending = new Queue<float>(times.OrderBy(t => t));
+        for (float t = 0; pending.Count > 0; t += dt)
+        {
+            s.Step(dt / 2); s.Step(dt / 2);
+            r.Encode(s, dt, fbo, W, H);
+            if (t + 1e-4f < pending.Peek()) continue;
+            var at = pending.Dequeue();
+            var px = new byte[W * H * 4];
+            Gl.PixelStorei(Gl.PACK_ALIGNMENT, 4);
+            Gl.BindFramebuffer(Gl.FRAMEBUFFER, fbo);
+            fixed (byte* p = px) Gl.ReadPixels(0, 0, W, H, Gl.BGRA, Gl.UNSIGNED_BYTE, p);
+            using var bmp = new Bitmap(W, H, PixelFormat.Format32bppRgb);
+            var d = bmp.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
+            for (int y = 0; y < H; y++) Marshal.Copy(px, (H - 1 - y) * W * 4, d.Scan0 + y * d.Stride, W * 4);
+            bmp.UnlockBits(d);
+            var file = Path.Combine(outDir, $"arena-{at:0.0}.png");
+            bmp.Save(file, ImageFormat.Png);
+            Console.WriteLine($"t={at:0.0} {info.Phase} round {info.Round} {info.RoundsA}:{info.RoundsB} hp {s.Me.Hp:0.00}/{s.Foe.Hp:0.00} banner '{info.Banner}' -> {file}");
+        }
+        Gl.wglMakeCurrent(IntPtr.Zero, IntPtr.Zero);
+        Gl.wglDeleteContext(ctx);
+    }
+
     /// Dev only, read-only: lays the copy of the real desktop over the real one at half strength and
     /// saves a screenshot, to check that every icon and label sits exactly on its original.
     public static void AlignTest(string outFile, int screenIndex = 0)

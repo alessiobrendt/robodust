@@ -87,7 +87,8 @@ public sealed class Panel : Window
         var m = model;
         return string.Join("|", m.Stage, m.Phase is Phase.Done or Phase.Tidying or Phase.Tidied or Phase.PuttingBack or Phase.Leaving or Phase.Finished ? m.Phase.ToString() : "live",
             m.Paused, m.Note, m.Outcome, m.Mode, m.Source, m.ReviewOpen, m.Result?.Title, m.Result?.Detail, m.Applying, m.Support, m.SkipFinalClick, m.ClearWindows,
-            m.LastRun?.Id, m.DockScreen, m.Fun, m.Page, System.Text.Json.JsonSerializer.Serialize(m.Settings), m.SortBy, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun);
+            m.LastRun?.Id, m.DockScreen, m.Fun, m.Page, System.Text.Json.JsonSerializer.Serialize(m.Settings), m.SortBy, m.Muted, m.Stage == Stage.Preparing ? m.Prepared : 0, m.RealRun,
+            m.Page == Page.Arena ? m.Arena.Shape : "");
     }
 
     public void Refresh()
@@ -142,6 +143,7 @@ public sealed class Panel : Window
                 }
                 else if (model.Page == Page.Shelf) ShelfPage(body);
                 else if (model.Page == Page.Shop) ShopPage(body);
+                else if (model.Page == Page.Arena) ArenaPage(body);
                 else Setup(body);
                 break;
             case Stage.Preparing: Preparing(body); break;
@@ -412,12 +414,94 @@ public sealed class Panel : Window
             body.Children.Add(stats);
         }
         var shopBtn = Btn($"Shop · ● {m.Settings.Coins:N0}", Kind.Quiet, () => { m.Page = Page.Shop; m.Changed(); }, "");
-        shopBtn.Margin = new Thickness(0, 14, 0, 0);
-        body.Children.Add(shopBtn);
+        var arenaBtn = Btn("⚔ Roboterkampf", Kind.Quiet, () => { m.Page = Page.Arena; m.Arena.Message = null; m.Changed(); });
+        var topRow = Row(8, shopBtn, arenaBtn);
+        ((FrameworkElement)topRow).Margin = new Thickness(0, 14, 0, 0);
+        body.Children.Add(topRow);
         var nav = Row(8, Btn("Einstellungen", Kind.Quiet, () => { m.Page = Page.Settings; m.Changed(); }, ""),
                          Btn("Ablage", Kind.Quiet, () => { m.Page = Page.Shelf; m.Changed(); }, ""));
         ((FrameworkElement)nav).Margin = new Thickness(0, 8, 0, 0);
         body.Children.Add(nav);
+    }
+
+    // MARK: - Roboterkampf
+
+    void ArenaPage(StackPanel body)
+    {
+        var m = model; var a = m.Arena; var s = m.Settings;
+        body.Children.Add(Btn("Zurück", Kind.Quiet, () => { m.Page = Page.Main; m.Changed(); }, ""));
+        body.Children.Add(new Border { Height = 16 });
+        if (a.Fighting)
+        {
+            body.Children.Add(Text("Der Kampf läuft. Pfeiltasten: fahren · Leertaste: Turbo · Esc: aufgeben", 13, Primary));
+            body.Children.Add(Row(8, Btn("Aufgeben", Kind.Warn, () => a.Forfeit())));
+            return;
+        }
+        if (string.IsNullOrEmpty(s.PlayerName))
+        {
+            // First a name: that's what the others in the network see.
+            var box = new TextBox
+            {
+                FontSize = 15, Height = 36, Padding = new Thickness(10, 6, 10, 6), MaxLength = 16, VerticalContentAlignment = VerticalAlignment.Center,
+                Background = new SolidColorBrush(Color.FromArgb(26, 255, 255, 255)), Foreground = Primary, CaretBrush = Primary,
+                BorderBrush = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)), BorderThickness = new Thickness(1),
+            };
+            void Save() { var n = Lan.CleanName(box.Text); if (n != "") m.Set(() => s.PlayerName = n); }
+            box.KeyDown += (_, e) => { if (e.Key == Key.Enter) { Save(); e.Handled = true; } };
+            body.Children.Add(Field("Dein Name in der Arena", box, Text("Andere im selben Netzwerk sehen diesen Namen, solange du diese Seite offen hast. Sonst wird nichts gesendet.")));
+            var go = Btn("Weiter", Kind.Primary, Save);
+            body.Children.Add(go);
+            Dispatcher.BeginInvoke(() => box.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+            return;
+        }
+        var who = new Grid();
+        who.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        who.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        who.Children.Add(Text($"Du kämpfst als {s.PlayerName}", 14, Primary, true));
+        var change = Btn("Ändern", Kind.Quiet, () => m.Set(() => s.PlayerName = null)); change.Height = 28; change.Width = 80;
+        Grid.SetColumn(change, 1); who.Children.Add(change);
+        who.Margin = new Thickness(0, 0, 0, 14);
+        body.Children.Add(who);
+        if (a.Message != null) { var t = Text(a.Message, 13, new SolidColorBrush(Amber)); t.Margin = new Thickness(0, 0, 0, 12); body.Children.Add(t); }
+        if (a.Incoming is { } inc)
+            body.Children.Add(Card(Amber, true, Text($"{inc.Name} fordert dich heraus!", 14, Primary, true), Text(Gear(inc.Look)),
+                Row(8, Btn("Annehmen", Kind.Primary, () => a.Accept()), Btn("Ablehnen", Kind.Quiet, () => a.Decline()))));
+        if (a.Pending is { } pen)
+            body.Children.Add(Card(Colors.White, false, Text($"Warte auf {pen.Name} …", 13, Primary, true), Row(8, Btn("Abbrechen", Kind.Quiet, () => a.CancelChallenge()))));
+        if (a.Accepted is { } acc)
+            body.Children.Add(Card(Colors.White, false, Text($"Angenommen. Gleich geht's los gegen {acc.Name} …", 13, Primary, true)));
+        var list = new StackPanel();
+        if (a.Peers.Count == 0)
+            list.Children.Add(Text("Noch niemand da. Wer mitkämpfen will, öffnet RoboDust auf seinem PC im selben Netzwerk und geht auf „Roboterkampf“."));
+        foreach (var p in a.Peers.OrderBy(p => p.Name))
+        {
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            info.Children.Add(Text(p.Name, 14, Primary, true));
+            info.Children.Add(Text(p.Busy ? "kämpft gerade" : Gear(p.Look)));
+            row.Children.Add(info);
+            var peer = p;
+            var b = Btn("Herausfordern", Kind.Primary, () => a.Challenge(peer));
+            b.Width = 130; b.IsEnabled = !p.Busy && a.Pending == null && a.Incoming == null && a.Accepted == null;
+            Grid.SetColumn(b, 1); row.Children.Add(b);
+            list.Children.Add(row);
+        }
+        body.Children.Add(Field("Im Netzwerk", list));
+        var practice = Btn("Gegen den Computer üben", Kind.Quiet, () => a.Practice());
+        practice.Margin = new Thickness(0, 0, 0, 12);
+        body.Children.Add(practice);
+        body.Children.Add(Text($"Deine Ausrüstung: {Gear(Look.Of(s))}. Kampfteile gibt es im Shop."));
+        var rules = Text("Zwei Gewinnrunden. Pfeiltasten: fahren · Leertaste: Turbo · Esc: aufgeben. Sieg: 20 Münzen, Niederlage: 5.");
+        rules.Margin = new Thickness(0, 6, 0, 0);
+        body.Children.Add(rules);
+    }
+
+    static string Gear(Look l)
+    {
+        var w = l.Weapon switch { 1 => "Kreissäge", 2 => "Hammer", 3 => "Flipper", 4 => "Drehklinge", _ => "Rammkeil" };
+        return w + (l.Armor ? " · Panzerung" : "") + (l.Spikes ? " · Stacheln" : "");
     }
 
     static string FunName(FunMode f) => f switch
@@ -984,6 +1068,11 @@ public static class PanelShot
         One(sh, System.IO.Path.Combine(dir, "panel_shop.png"));
         var sb = M(); sb.Page = Page.Shop; sb.Settings.Coins = 900; sb.Settings.Weapon = 2; sb.Settings.Armor = true; sb.Settings.Skin = 6;
         Panel.FirstShopCategory = ShopCategory.Battle; One(sb, System.IO.Path.Combine(dir, "panel_shop_battle.png")); Panel.FirstShopCategory = ShopCategory.Skins;
+        var ar = M(); ar.Page = Page.Arena; ar.Settings.PlayerName = "Alessio"; ar.Settings.Weapon = 2; ar.Settings.Armor = true;
+        ar.Arena.Peers.Add(new LanPeer { Id = "a", Name = "Max", Look = new Look { Weapon = 1 } }); ar.Arena.Peers.Add(new LanPeer { Id = "b", Name = "Lena", Busy = true });
+        ar.Arena.Incoming = new LanPeer { Id = "c", Name = "Tom", Look = new Look { Weapon = 4, Spikes = true } };
+        One(ar, System.IO.Path.Combine(dir, "panel_arena.png"));
+        var an = M(); an.Page = Page.Arena; an.Settings.PlayerName = null; One(an, System.IO.Path.Combine(dir, "panel_arena_name.png"));
         var h = M(); h.Settings.Stats = new Stats { Runs = 12, Items = 312, Bytes = 14_200_000_000, Meters = 1234, Kinds = new() { ["Bilder"] = 120, ["Dokumente"] = 80 } };
         One(h, System.IO.Path.Combine(dir, "panel_stats.png"));
     }

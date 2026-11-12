@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -13,7 +13,7 @@ namespace RoboDust;
 
 /// Runs a clean from start to finish. A straight port of the Mac AppController, except that the
 /// outcomes are Ordnen, Wegräumen and Ausblenden, and nothing is ever deleted.
-public sealed class AppController
+public sealed partial class AppController
 {
     public readonly Model Model = new();
     public Panel Panel;
@@ -56,7 +56,7 @@ public sealed class AppController
             m.Changed();
         };
         m.Quit = () => Quit(false);
-        m.Changed = () => Panel?.Refresh();
+        m.Changed = () => { Panel?.Refresh(); ArenaSync(); };
         var st = m.Settings;
         m.SetAutostart = on =>
         {
@@ -96,6 +96,7 @@ public sealed class AppController
         // A scheduled clean runs on the real desktop and leaves the user's windows alone.
         if (Scheduled) { m.Source = Source.Real; ui.BeginInvoke(Begin, DispatcherPriority.ApplicationIdle); }
         if (AutoDemo) ui.BeginInvoke(Begin, DispatcherPriority.ApplicationIdle);
+        ArenaSync();
         if (AutoStop > 0) Delay(AutoStop, () => { FileOps.Trace($"auto stop: {overlays.Count} window(s), {sim?.Items.Count} items, {sim?.Phase}, robot at {sim?.Pos}, room {(sim != null ? sim.Plan.RoomOf(sim.Pos) : -1)}"); StopAndRestore(); Quit(); });
     }
 
@@ -178,6 +179,8 @@ public sealed class AppController
         if (Model.Applying || quitting) return;
         if (!force && KeepsRunning && Model.Stage == Stage.Ready) { Panel.Hide(); HintTray(); return; }
         quitting = true;
+        if (arena != null) { if (!arenaPractice) lan?.Send(foe.End, new { t = "bye", id = lan.Id, sid }); CloseArena(); }
+        StopLan();
         Teardown();
         if (PanelHandle != IntPtr.Zero) Startup.SetHotkey(PanelHandle, false);
         if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
@@ -191,7 +194,7 @@ public sealed class AppController
     void Begin()
     {
         var m = Model;
-        if (m.Stage != Stage.Ready) return;
+        if (m.Stage != Stage.Ready || arena != null) return;
         var all = Screen.All();
         Floorplan.Layout(all);
         var primary = all[0];
@@ -754,5 +757,6 @@ public static class ArrowKeys
         return pid == (uint)Environment.ProcessId;
     }
     public static float Throttle() => !Ours() ? 0 : (Down(0x26) ? 1 : 0) - (Down(0x28) ? 0.6f : 0);   // up, down
+    public static bool Turbo() => Ours() && Down(0x20);   // space
     public static float Steer() => !Ours() ? 0 : (Down(0x27) ? 1 : 0) - (Down(0x25) ? 1 : 0);         // right, left
 }

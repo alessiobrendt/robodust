@@ -24,7 +24,7 @@ public sealed unsafe class Renderer
     }
 
     public readonly V2 SizePts;
-    readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade, pWeapon, pBar;
+    readonly Prog pBg, pSprite, pPart, pRobot, pBrush, pShadow, pDock, pLidar, pStamp, pFade, pBlade, pWeapon, pBar, pArena, pTag;
     public RobotSkin Skin;
     public Look Look;          // hats, tuning and pet from the shop; Skin and Hat are kept in step
     float botTime;
@@ -61,6 +61,8 @@ public sealed unsafe class Renderer
         pBlade = new Prog(Shaders.BladeVS, Shaders.BladeFS);
         pWeapon = new Prog(Shaders.WeaponVS, Shaders.WeaponFS);
         pBar = new Prog(Shaders.BarVS, Shaders.BarFS);
+        pArena = new Prog(Shaders.ArenaVS, Shaders.ArenaFS);
+        pTag = new Prog(Shaders.TagVS, Shaders.TagFS);
 
         emptyVao = Gl.Gen(Gl.GenVertexArrays);
 
@@ -327,6 +329,13 @@ public sealed unsafe class Renderer
         Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
         Gl.ActiveTexture(Gl.TEXTURE0);
         Gl.Enable(Gl.BLEND);
+        if (sim.Arena is { } arena)
+        {
+            pArena.Use(SizePts, Origin);
+            Gl.BindVertexArray(emptyVao);
+            pArena.F4("rect", 0, 0, arena.W, arena.H); pArena.F("time", sim.T);
+            Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+        }
 
         DrawSprites(groundLabels, labelTex, false);
         // Only lifted icons cast a shadow, so the resting ones match Explorer's look exactly.
@@ -351,6 +360,71 @@ public sealed unsafe class Renderer
         DrawRobot(sim);
         catR.Draw(sim, sim.Cat, SizePts, Origin, true);
         DrawSprites(late, iconTex, false);
+        if (sim.Arena != null) DrawArenaHud(sim);
+    }
+
+    // MARK: - Arena
+
+    readonly Dictionary<string, (uint tex, V2 size)> texts = new();
+
+    /// Text as a texture: white with a dark outline, so it reads on any wallpaper. Cached.
+    (uint tex, V2 size) TextTexture(string s, float heightPts, Color color)
+    {
+        var key = $"{s}|{heightPts}|{color.ToArgb()}";
+        if (texts.TryGetValue(key, out var t)) return t;
+        if (texts.Count > 64) { foreach (var v in texts.Values) { var id = v.tex; Gl.DeleteTextures(1, &id); } texts.Clear(); }
+        const float k = 2.5f;   // pixels per point, sharp on every display
+        var px = heightPts * k;
+        using var font = new Font("Segoe UI", px * 0.72f, FontStyle.Bold, GraphicsUnit.Pixel);
+        SizeF sz;
+        using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) sz = pg.MeasureString(s, font);
+        int w = Math.Max(4, (int)MathF.Ceiling(sz.Width + px * 0.3f)), h = Math.Max(4, (int)MathF.Ceiling(px * 1.15f));
+        using var bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = TextRenderingHint.AntiAlias;
+            using var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddString(s, font.FontFamily, (int)font.Style, font.Size, new PointF((w - sz.Width) / 2 + px * 0.05f, (h - sz.Height) / 2), StringFormat.GenericDefault);
+            using var pen = new Pen(Color.FromArgb(200, 10, 10, 14), px * 0.14f) { LineJoin = System.Drawing.Drawing2D.LineJoin.Round };
+            g.DrawPath(pen, path);
+            using var brush = new SolidBrush(color);
+            g.FillPath(brush, path);
+        }
+        t = (Texture2D(w, h, Sprites.Pixels(bmp), Gl.BGRA, false), new V2(w / k, h / k));
+        texts[key] = t;
+        return t;
+    }
+
+    void DrawText(string s, V2 center, float heightPts, float alpha, Color color, float scale = 1)
+    {
+        if (string.IsNullOrEmpty(s) || alpha <= 0.01f) return;
+        var (tex, size) = TextTexture(s, heightPts, color);
+        pTag.Use(SizePts, Origin);
+        Gl.BindVertexArray(emptyVao);
+        Gl.ActiveTexture(Gl.TEXTURE0); Gl.BindTexture(Gl.TEXTURE_2D, tex);
+        pTag.I("tex", 0); pTag.F2("center", center); pTag.F2("half_", size * (0.5f * scale)); pTag.F("alpha", alpha);
+        Gl.DrawArrays(Gl.TRIANGLES, 0, 6);
+    }
+
+    void DrawArenaHud(Sim sim)
+    {
+        var a = sim.Arena;
+        // Names over the health bars: yours in cyan, theirs in red.
+        if (sim.Me is { } me) DrawText(me.Name, sim.Pos + new V2(0, -(sim.R * 1.28f + 28)), 16, 1, Color.FromArgb(150, 230, 255));
+        if (sim.Foe is { } foe) DrawText(foe.Name, foe.Pos + new V2(0, -(foe.R * 1.28f + 28)), 16, foe.Alpha, Color.FromArgb(255, 150, 140));
+        // The score, just above the arena.
+        DrawText($"{a.NameA}   {a.RoundsA} : {a.RoundsB}   {a.NameB}", new V2(a.W / 2, -24), 22, 1, Color.White);
+        // The banner: the countdown pops and fades each second, the rest stays until it changes.
+        if (a.Banner != "")
+        {
+            var digit = a.Banner.Length == 1;
+            var pop = 1 + 0.35f * MathF.Max(0, 1 - a.BannerT * 5);
+            var alpha = digit ? 1 - M.Smooth(0.7f, 1, a.BannerT) : a.Banner == "KAMPF!" ? 1 - M.Smooth(0.9f, 1.2f, a.BannerT) : 1;
+            var col = a.Banner == "KAMPF!" ? Color.FromArgb(255, 210, 80) : Color.White;
+            DrawText(a.Banner, new V2(a.W / 2, a.H * 0.2f), digit ? 110 : 64, alpha, col, pop);
+        }
+        DrawText("Pfeiltasten: fahren  ·  Leertaste: Turbo  ·  Esc: aufgeben", new V2(a.W / 2, a.H + 26), 15, 0.85f, Color.FromArgb(220, 225, 235));
     }
 
     void DrawSprites(List<Inst> list, uint tex, bool shadows)

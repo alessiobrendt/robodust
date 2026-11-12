@@ -330,7 +330,9 @@ public sealed partial class Sim
         to.Flash = 1;
         if (recoil && by != Me) by.Recoil = 0.5f;
         if (to == Me && knock.Len > 100) { Shake = MathF.Max(Shake, 0.8f); Bumper = 0.8f; }
+        if (knock.Len > 100) Event(3, to.Pos.X, to.Pos.Y, M.Clamp(knock.Len / 900, 0.15f, 0.7f));
         if (to.Hp > 0) return;
+        Event(6, to.Pos.X, to.Pos.Y, 0);
         // K.o.
         to.Hp = 0; to.Down = true; to.KoT = 0; to.Stun = 0;
         Sparks(to.Pos, 30, 520);
@@ -366,6 +368,7 @@ public sealed partial class Sim
 
     void Sparks(V2 at, int n, float speed)
     {
+        Event(1, at.X, at.Y, n);
         for (int i = 0; i < n; i++)
         {
             var a = Rand(0, 6.283f);
@@ -376,6 +379,7 @@ public sealed partial class Sim
 
     void Dust(V2 at, float r, int n)
     {
+        Event(2, at.X, at.Y, n);
         for (int i = 0; i < n; i++)
         {
             var a = Rand(0, 6.283f);

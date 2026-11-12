@@ -63,6 +63,14 @@ public static class Program
             catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
             return 0;
         }
+        if (Has("--arena-dump"))
+        {
+            Console_();
+            var times = (Value("--arena-dump") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(s => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            try { Offline.ArenaDump(times, Value("--out") ?? ".", Value("--look-a"), Value("--look-b")); }
+            catch (Exception e) { Console.WriteLine("ERROR " + e); return 1; }
+            return 0;
+        }
         if (Value("--write-icon") is { } ico) { AppIcon.WriteIco(ico); return 0; }
         if (Value("--coins") is { } give)
         {
@@ -195,8 +203,23 @@ public static class Program
             if (int.TryParse(Value("--test-mode"), out var tm)) controller.Model.Settings.Mode = tm;
             controller.Model.Settings.SkipFinalClick = true;
         }
+        if (Value("--arena-auto") is { } role)
+        {
+            // Dev only: a fight between two copies on this PC, over loopback, the computer at the keys.
+            Console_();
+            Settings.Persists = false;
+            controller.ArenaAuto = role;
+            controller.Model.Settings.PlayerName = Value("--name") ?? role;
+            controller.Model.Settings.ClearWindows = false;
+            controller.Model.Muted = true;
+            controller.Model.Page = Page.Arena;
+            controller.StartInTrayForTest = true;
+            if (int.TryParse(Value("--lan-port"), out var lp)) controller.LanTestPort = lp;
+            if (int.TryParse(Value("--lan-peer"), out var lpeer)) controller.LanTestPeer = lpeer;
+            if (Value("--weapon") is { } wv && int.TryParse(wv, out var wi)) controller.Model.Settings.Weapon = wi;
+        }
         if (Has("--sample-auto")) { Settings.Persists = false; controller.Model.Settings.SkipFinalClick = true; }
-        controller.StartInTray = Has("--tray") || Has("--scheduled");
+        controller.StartInTray = Has("--tray") || Has("--scheduled") || controller.StartInTrayForTest;
         controller.Scheduled = Has("--scheduled");
         // One RoboDust at a time. A second start (a double-click, or the schedule while it sits in the
         // tray) wakes the one that is running instead. Dev runs with flags stay separate.

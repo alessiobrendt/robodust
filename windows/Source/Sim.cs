@@ -206,6 +206,7 @@ public sealed partial class Sim
 
     public void Step(float dt)
     {
+        if (Arena != null) { ArenaStep(dt); return; }
         T += dt;
         Cat?.Update(this, dt);
         if (Paused)

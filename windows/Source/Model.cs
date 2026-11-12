@@ -28,7 +28,7 @@ public sealed class Stats
     }
 }
 
-public enum Page { Main, Settings, Shelf, Shop }
+public enum Page { Main, Settings, Shelf, Shop, Arena }
 public enum RobotSkin { White = 0, Black = 1, Gold = 2, Retro = 3, Pink = 4, Squirrel = 5, Carbon = 6, Chrome = 7, Camo = 8, Galaxy = 9, Neon = 10, Zebra = 11, Leopard = 12, Wood = 13, Marble = 14, Rainbow = 15, Lava = 16, Ice = 17, Police = 18 }
 
 public sealed class RunResult
@@ -75,6 +75,7 @@ public sealed class Settings
     public bool Armor { get; set; }
     public bool Spikes { get; set; }
     public Stats Stats { get; set; } = new();
+    public string PlayerName { get; set; }      // shown to others on the local network in the arena
 
     public static bool Persists = true;
     static string FilePath => Path.Combine(FileOps.DataDir, "settings.json");
@@ -128,6 +129,7 @@ public sealed class Model
     public Sim Sim;
     public List<Screen> Screens = new();
     public Page Page = Page.Main;
+    public readonly ArenaModel Arena = new();
     /// Changes a setting and saves it.
     public void Set(Action change) { change(); Settings.Save(); Changed(); }
     public Action<bool> SetAutostart, SetHotkey;

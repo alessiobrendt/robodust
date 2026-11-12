@@ -900,6 +900,46 @@ void main() {
     o = c * alpha;
 }";
 
+    // ---------- arena: darkened surroundings, a glowing rail, a faint floor grid ----------
+    public const string ArenaVS = Head + @"
+out vec2 w;
+void main() { vec2 q = kQuad[gl_VertexID]; gl_Position = vec4(q, 0.0, 1.0); w = origin + vec2((q.x * .5 + .5) * viewport.x, (.5 - q.y * .5) * viewport.y); }";
+    public const string ArenaFS = Head + @"
+in vec2 w; out vec4 o;
+uniform vec4 rect; uniform float time;
+float sdBox(vec2 p, vec2 b, float r) { vec2 d = abs(p) - b + r; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r; }
+void main() {
+    vec2 hb = rect.zw * 0.5; vec2 c = rect.xy + hb; vec2 p = w - c;
+    float d = sdBox(p, hb, 22.0);
+    // Left half the host's colour, right half the guest's.
+    vec3 rail = mix(vec3(0.25, 0.85, 1.0), vec3(1.0, 0.35, 0.3), smoothstep(-40.0, 40.0, p.x));
+    float pulse = 0.8 + 0.2 * sin(time * 3.0);
+    vec3 col = vec3(0.0); float a = 0.0;
+    if (d > 0.0) { a = 0.62 * smoothstep(0.0, 3.0, d); }
+    else {
+        // Floor: a faint grid and a dashed centre line.
+        vec2 g = abs(fract((w - rect.xy) / 64.0) - 0.5);
+        float grid = smoothstep(0.47, 0.5, max(g.x, g.y));
+        float mid = step(abs(p.x), 1.5) * step(0.5, fract(p.y / 28.0));
+        float ring = smoothstep(1.5, 0.0, abs(length(p) - 90.0));
+        a = 0.10 + 0.05 * grid + 0.25 * max(mid, ring);
+        col = mix(vec3(0.0), vec3(0.75, 0.85, 1.0), (0.05 * grid + 0.25 * max(mid, ring)) / max(a, 0.001));
+    }
+    float glow = exp(-abs(d) / 5.0) * pulse;
+    col = mix(col, rail, clamp(glow, 0.0, 1.0)); a = max(a, glow);
+    o = vec4(col * a, a);
+}";
+
+    // ---------- arena: a picture of text (names, score, countdown) ----------
+    public const string TagVS = Head + @"
+uniform vec2 center; uniform vec2 half_;
+out vec2 uv;
+void main() { vec2 q = kQuad[gl_VertexID]; gl_Position = toClip(center + q * half_); uv = vec2(q.x * .5 + .5, q.y * .5 + .5); }";
+    public const string TagFS = Head + @"
+in vec2 uv; out vec4 o;
+uniform sampler2D tex; uniform float alpha;
+void main() { o = texture(tex, uv) * alpha; }";
+
     // ---------- duel: health bars ----------
     public const string BarVS = Head + @"
 uniform vec2 center; uniform vec2 half_;

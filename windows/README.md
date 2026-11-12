@@ -89,6 +89,12 @@ Für jede aufgeräumte Datei gibt es eine Münze, und beim Aufräumen liegen Mü
 
 Im Spaßmodus **Duell** greift ein Herausforderer nach dem anderen an (Krawall mit Säge, Brecher mit Hammer, Kipper mit Flipper, Wirbel mit Drehklinge, Igel mit Stacheln). Beide haben eine Lebensleiste, RoboDust wehrt sich mit seinen Kampfteilen, und jeder K.o. bringt 3 Münzen. Wer zweimal gewinnt, zieht ab; aufgeräumt wird trotzdem ganz normal.
 
+## Roboterkampf im Netzwerk
+
+Unter **Roboterkampf** treten zwei RoboDusts im selben Netzwerk gegeneinander an. Du gibst einen Namen ein, siehst, wer sonst die Seite offen hat, und forderst jemanden heraus; der andere nimmt an oder lehnt ab. Gekämpft wird in einer Arena auf dem Bildschirm mit der Station: Pfeiltasten fahren, Leertaste ist Turbo, Esc gibt auf. Zwei Gewinnrunden, Sieg 20 Münzen, Niederlage 5. Die Kampfteile aus dem Shop zählen. Ohne Gegner im Netzwerk geht **Gegen den Computer üben**.
+
+Gesendet wird nur im lokalen Netzwerk (UDP, Port 47820) und nur, solange die Seite offen ist oder ein Kampf läuft: der Name, das Aussehen des Roboters und im Kampf Positionen und Tastendrücke. Beim ersten Mal fragt die Windows-Firewall, ob RoboDust im Netzwerk erreichbar sein darf; ohne „Zugriff zulassen“ (für private Netzwerke) findet ihr euch nicht.
+
 Münzen geben (oder mit Minus nehmen), auch während RoboDust läuft:
 
 ```
